@@ -1,0 +1,23 @@
+# DeepTrace backend runtime dependencies
+# Python 3.11 on Windows. CPU PyTorch wheels are used for reproducibility.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+SQLAlchemy==2.0.52
+python-multipart==0.0.32
+
+numpy==1.26.4
+Pillow==10.2.0
+opencv-python-headless==4.10.0.84
+ImageHash==4.3.2
+reportlab==5.0.1
+scipy==1.17.1
+soundfile==0.14.0
+
+torch==2.2.2+cpu
+torchvision==0.17.2+cpu
+torchaudio==2.2.2+cpu
+facenet-pytorch==2.6.0
+transformers==4.41.2
+SpeechBrain==1.0.3

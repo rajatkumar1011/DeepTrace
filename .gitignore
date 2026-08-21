@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local Python environments
+.venv/
+venv/
+backend/venv/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Databases and local runtime state
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploaded and generated forensic artifacts
+uploads/
+backend/uploads/
+evidence/
+backend/evidence/
+data/reports/
+backend/data/reports/
+pretrained_models/
+backend/pretrained_models/
+
+# Model and tool caches
+.cache/
+.huggingface/
+**/.cache/
+**/huggingface/
+
+# Frontend dependencies and build output
+node_modules/
+frontend/node_modules/
+/.next/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/*.tsbuildinfo
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db

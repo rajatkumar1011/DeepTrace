@@ -1,0 +1,9 @@
+{
+    "python.defaultInterpreterPath": "backend\\venv\\Scripts\\python.exe",
+    "python.analysis.extraPaths": [
+        "./backend/venv/Lib/site-packages",
+        "./backend"
+    ],
+    "python.languageServer": "Pylance",
+    "python-envs.defaultEnvManager": "ms-python.python:system"
+}
