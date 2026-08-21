@@ -255,8 +255,14 @@ function IdentityView({ identities, onRefresh, setMessage }: { identities: Ident
       setName(""); setImageFile(null); setAudioFile(null);
       onRefresh();
     } catch (err: unknown) {
-      const axErr = err as { response?: { data?: { detail?: string } } };
-      setMessage(`❌ Enrollment failed: ${axErr.response?.data?.detail || "Unknown error"}`);
+      const detail = axios.isAxiosError(err)
+        ? (typeof err.response?.data?.detail === "string"
+          ? err.response.data.detail
+          : typeof err.response?.data === "string"
+            ? err.response.data
+            : err.message)
+        : err instanceof Error ? err.message : "Unexpected client error";
+      setMessage(`❌ Enrollment failed: ${detail}`);
     } finally { setEnrolling(false); }
   };
 
@@ -335,8 +341,14 @@ function InvestigateView({ identities, onCreated, setMessage }: { identities: Id
       setFile(null); setIdentityId("");
       onCreated(res.data.id);
     } catch (err: unknown) {
-      const axErr = err as { response?: { data?: { detail?: string } } };
-      setMessage(`❌ Upload failed: ${axErr.response?.data?.detail || "Unknown error"}`);
+      const detail = axios.isAxiosError(err)
+        ? (typeof err.response?.data?.detail === "string"
+          ? err.response.data.detail
+          : typeof err.response?.data === "string"
+            ? err.response.data
+            : err.message)
+        : err instanceof Error ? err.message : "Unexpected client error";
+      setMessage(`❌ Upload failed: ${detail}`);
     } finally { setUploading(false); }
   };
 

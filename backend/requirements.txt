@@ -21,3 +21,4 @@ torchaudio==2.2.2+cpu
 facenet-pytorch==2.6.0
 transformers==4.41.2
 SpeechBrain==1.0.3
+c2pa-python==0.37.5

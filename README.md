@@ -111,9 +111,27 @@ DeepTrace uses these pretrained models when they load successfully:
 
 - Face identity: `facenet-pytorch` MTCNN plus `InceptionResnetV1(pretrained='vggface2')`; output is a real 512-dimensional FaceNet embedding.
 - Manipulation analysis: `Hemg/Deepfake-Detection` through Transformers; sampled frames are analyzed individually and aggregated.
+- Manipulation analysis (preferred when the local checkpoint is present): DeepfakeBench Xception using the official `xception_best.pth` release. This detector and checkpoint are CC BY-NC 4.0 and are limited to non-commercial research/evaluation use.
 - Voice identity: SpeechBrain `speechbrain/spkrec-ecapa-voxceleb`; reference and suspicious audio are compared with the real ECAPA speaker-verification model.
+- Content provenance: `c2pa-python` reads and validates embedded C2PA Content Credentials when supported media includes them. This is a provenance signal, not a deepfake classifier.
 
 Models are loaded lazily, one analysis family at a time, and inference runs with evaluation/no-gradient mode. CPU inference is supported. If a model cannot load, the UI marks that module unavailable or explicitly identifies the lightweight fallback; it does not fabricate scores.
+
+### DeepfakeBench Xception checkpoint
+
+The local development setup can use the official DeepfakeBench v1.0.1
+`xception_best.pth` checkpoint. It is downloaded to an ignored local folder and
+is selected before the Hugging Face detector:
+
+```powershell
+New-Item -ItemType Directory -Force backend\pretrained_models\deepfakebench
+Invoke-WebRequest `
+  https://github.com/SCLBD/DeepfakeBench/releases/download/v1.0.1/xception_best.pth `
+  -OutFile backend\pretrained_models\deepfakebench\xception_best.pth
+```
+
+DeepfakeBench and this checkpoint are CC BY-NC 4.0. Use them only for
+non-commercial research/evaluation unless you obtain separate permission.
 
 ## Demo Workflow
 

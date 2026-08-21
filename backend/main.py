@@ -9,12 +9,13 @@ import shutil
 import json
 from uuid import uuid4
 
-from database import engine, Base, get_db
+from database import engine, Base, get_db, migrate_sqlite
 from models.schema import Identity, Investigation, Evidence, AnalysisResult, TimelineEvent
 from services.forensics import calculate_sha256, extract_video_metadata, calculate_perceptual_hash
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+migrate_sqlite()
 
 app = FastAPI(title="DeepTrace API", version="1.0.0", description="Intelligent Digital Impersonation Detection and Forensic Evidence Preservation")
 
@@ -62,9 +63,16 @@ async def enroll_identity(
     db: Session = Depends(get_db)
 ):
     """Enroll a protected identity profile with face embedding."""
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Identity name is required.")
+    if not reference_image.filename:
+        raise HTTPException(status_code=422, detail="A reference image is required.")
+
     # Save reference image
     os.makedirs(os.path.join(UPLOAD_DIR, "identities"), exist_ok=True)
-    img_path = os.path.join(UPLOAD_DIR, "identities", f"{uuid4().hex}_{reference_image.filename}")
+    image_filename = os.path.basename(reference_image.filename)
+    img_path = os.path.join(UPLOAD_DIR, "identities", f"{uuid4().hex}_{image_filename}")
     with open(img_path, "wb") as f:
         shutil.copyfileobj(reference_image.file, f)
     
@@ -77,13 +85,18 @@ async def enroll_identity(
         print(f"Face embedding error: {e}")
     
     if face_embedding is None:
+        try:
+            os.remove(img_path)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail="No face detected in the reference image. Please upload a clear frontal face photo.")
     
     # Save reference audio if provided
     audio_path = None
     voice_embedding = None
     if reference_audio and reference_audio.filename:
-        audio_path = os.path.join(UPLOAD_DIR, "identities", f"{uuid4().hex}_{reference_audio.filename}")
+        audio_filename = os.path.basename(reference_audio.filename)
+        audio_path = os.path.join(UPLOAD_DIR, "identities", f"{uuid4().hex}_{audio_filename}")
         with open(audio_path, "wb") as f:
             shutil.copyfileobj(reference_audio.file, f)
         try:
@@ -99,9 +112,19 @@ async def enroll_identity(
         face_embedding=face_embedding,
         voice_embedding=voice_embedding,
     )
-    db.add(identity)
-    db.commit()
-    db.refresh(identity)
+    try:
+        db.add(identity)
+        db.commit()
+        db.refresh(identity)
+    except Exception as e:
+        db.rollback()
+        for path in (img_path, audio_path):
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        raise HTTPException(status_code=500, detail="Could not save the identity profile. Please try again.") from e
     
     return {
         "id": identity.id,
@@ -149,7 +172,23 @@ async def create_investigation(
     db: Session = Depends(get_db)
 ):
     """Upload suspicious media and create an investigation."""
-    file_path = os.path.join(UPLOAD_DIR, f"{uuid4().hex}_{file.filename}")
+    if not file.filename:
+        raise HTTPException(status_code=422, detail="A media file is required.")
+
+    filename = os.path.basename(file.filename)
+    ext = os.path.splitext(filename)[1].lower()
+    media_types = {
+        ".mp4": "video", ".avi": "video", ".mov": "video", ".mkv": "video", ".webm": "video",
+        ".jpg": "image", ".jpeg": "image", ".png": "image", ".bmp": "image", ".webp": "image",
+        ".wav": "audio", ".mp3": "audio", ".flac": "audio", ".ogg": "audio",
+    }
+    media_type = media_types.get(ext)
+    if media_type is None:
+        raise HTTPException(status_code=415, detail="Unsupported media type. Upload an image, video, or audio file.")
+    if identity_id is not None and not db.query(Identity.id).filter(Identity.id == identity_id).first():
+        raise HTTPException(status_code=422, detail="The selected protected identity no longer exists.")
+
+    file_path = os.path.join(UPLOAD_DIR, f"{uuid4().hex}_{filename}")
     
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -157,17 +196,8 @@ async def create_investigation(
     file_size = os.path.getsize(file_path)
     sha256_hash = calculate_sha256(file_path)
     
-    ext = os.path.splitext(file.filename)[1].lower()
-    media_type = "unknown"
-    if ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
-        media_type = "video"
-    elif ext in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']:
-        media_type = "image"
-    elif ext in ['.wav', '.mp3', '.flac', '.ogg']:
-        media_type = "audio"
-        
     investigation = Investigation(
-        filename=file.filename,
+        filename=filename,
         file_path=file_path,
         file_size_bytes=file_size,
         sha256_hash=sha256_hash,
@@ -485,10 +515,13 @@ def _run_identity_analysis(db: Session, inv: Investigation, frame_paths: list):
         
         similarities = []
         analysis_frames = []
+        dimension_mismatch = False
         
         if inv.media_type == "image":
             emb = generate_face_embedding(inv.file_path)
             if emb:
+                if len(emb) != len(identity.face_embedding):
+                    dimension_mismatch = True
                 sim = compare_faces(identity.face_embedding, emb)
                 similarities.append(sim)
                 analysis_frames.append({"path": inv.file_path, "similarity": sim})
@@ -496,6 +529,8 @@ def _run_identity_analysis(db: Session, inv: Investigation, frame_paths: list):
             for fp in frame_paths:
                 emb = generate_face_embedding(fp)
                 if emb:
+                    if len(emb) != len(identity.face_embedding):
+                        dimension_mismatch = True
                     sim = compare_faces(identity.face_embedding, emb)
                     similarities.append(sim)
                     analysis_frames.append({"path": fp, "similarity": sim})
@@ -503,6 +538,8 @@ def _run_identity_analysis(db: Session, inv: Investigation, frame_paths: list):
         if similarities:
             best_sim = max(similarities)
             avg_sim = sum(similarities) / len(similarities)
+            # If embeddings came from different model versions, flag mismatch
+            mismatch_note = " Warning: reference embedding dimension mismatch (fallback 4096 vs FaceNet 512). Re-enroll the identity to refresh the embedding." if dimension_mismatch else ""
             ar = AnalysisResult(
                 investigation_id=inv.id,
                 module_name="identity",
@@ -516,11 +553,12 @@ def _run_identity_analysis(db: Session, inv: Investigation, frame_paths: list):
                     "reference_identity": identity.name,
                     "method": "Lightweight fallback" if len(identity.face_embedding) != 512 else "Face embedding model",
                     "model_status": "Advanced ML model unavailable on this machine" if len(identity.face_embedding) != 512 else "Advanced ML model available",
-                    "status": "Visual similarity signal (fallback)" if len(identity.face_embedding) != 512 else "Visual similarity signal",
+                    "status": ("Visual similarity signal (fallback)" if len(identity.face_embedding) != 512 else "Visual similarity signal") + mismatch_note,
                     "model_name": "FaceNet / InceptionResnetV1" if len(identity.face_embedding) == 512 else "Lightweight fallback",
                     "model_version": "pretrained VGGFace2" if len(identity.face_embedding) == 512 else "deterministic image embedding",
                     "timestamp": datetime.utcnow().isoformat(),
-                    "note": "Cosine similarity score. Higher = more similar. This is a supporting signal, not proof of identity.",
+                    "note": "Cosine similarity score. Higher = more similar. This is a supporting signal, not proof of identity." + mismatch_note,
+                    "dimension_mismatch": dimension_mismatch,
                 },
             )
         else:
@@ -603,20 +641,24 @@ def _run_voice_analysis(db: Session, inv: Investigation):
             return
         
         from services.voice import compare_voices, release_models
-        score = compare_voices(identity.reference_audio_path, audio_path)
+        voice_result = compare_voices(identity.reference_audio_path, audio_path)
+        # compare_voices returns a dict with similarity_score, method, model_name, etc.
+        similarity = voice_result.get("similarity_score") if isinstance(voice_result, dict) else voice_result
+        # Normalize confidence: abs of similarity when numeric, else None
+        try:
+            conf = abs(float(similarity)) if similarity is not None else None
+        except Exception:
+            conf = None
         
         ar = AnalysisResult(
             investigation_id=inv.id,
             module_name="voice",
-            score=score,
-            confidence=abs(score),
+            score=float(similarity) if isinstance(similarity, (int, float)) and not isinstance(similarity, bool) else None,
+            confidence=conf,
             result_data={
-                "similarity_score": score,
+                **(voice_result if isinstance(voice_result, dict) else {"similarity_score": voice_result}),
+                "similarity_score": similarity,
                 "reference_identity": identity.name,
-                "method": "ECAPA speaker verification",
-                "model_status": "Advanced ML model available",
-                "model_name": "ECAPA-TDNN / ECAPA-VOXCELEB",
-                "model_version": "speechbrain/spkrec-ecapa-voxceleb",
                 "timestamp": datetime.utcnow().isoformat(),
                 "note": "Speaker similarity score. This is supporting identity evidence, not proof of identity.",
             },
@@ -713,17 +755,16 @@ def _run_similarity_search(db: Session, inv: Investigation):
         print(f"Similarity search error: {e}")
 
 def _run_provenance_analysis(db: Session, inv: Investigation):
-    """Record the provenance/C2PA status if no local provenance source is available."""
+    """Inspect uploaded media for independently verifiable C2PA credentials."""
     try:
+        from services.provenance import inspect_c2pa
+
+        result = inspect_c2pa(inv.file_path)
         ar = AnalysisResult(
             investigation_id=inv.id,
             module_name="provenance",
             score=None,
-            result_data={
-                "status": "C2PA verification unavailable in this prototype.",
-                "method": "Unavailable",
-                "note": "No Content Credentials were independently verified.",
-            },
+            result_data=result,
         )
         db.add(ar)
         db.commit()

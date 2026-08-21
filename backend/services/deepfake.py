@@ -1,3 +1,5 @@
+import os
+
 from PIL import Image
 import cv2
 import numpy as np
@@ -5,22 +7,54 @@ from datetime import datetime
 
 _processor = None
 _model = None
+_model_name = None
+
+_DEEPFAKEBENCH_WEIGHTS = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "pretrained_models", "deepfakebench", "xception_best.pth"
+))
+
+def _load_deepfakebench_xception():
+    """Load DeepfakeBench's released Xception checkpoint when installed locally."""
+    if not os.path.isfile(_DEEPFAKEBENCH_WEIGHTS):
+        return None
+
+    import torch
+    from services.deepfakebench_xception import Xception
+
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    checkpoint = torch.load(_DEEPFAKEBENCH_WEIGHTS, map_location=device)
+    state_dict = checkpoint.get("state_dict", checkpoint)
+    state_dict = {
+        key.removeprefix("backbone."): value for key, value in state_dict.items()
+    }
+    model = Xception()
+    model.load_state_dict(state_dict, strict=True)
+    return model.eval().to(device)
 
 def get_deepfake_model():
-    global _processor, _model
+    global _processor, _model, _model_name
     if _model is None:
         try:
             import torch
+            deepfakebench_model = _load_deepfakebench_xception()
+            if deepfakebench_model is not None:
+                _model = deepfakebench_model
+                _processor = "deepfakebench"
+                _model_name = "DeepfakeBench Xception"
+                return _processor, _model
+
             from transformers import ViTForImageClassification, ViTImageProcessor
 
             device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
             model_name = "Hemg/Deepfake-Detection"
             _processor = ViTImageProcessor.from_pretrained(model_name)
             _model = ViTForImageClassification.from_pretrained(model_name).eval().to(device)
+            _model_name = model_name
         except Exception as e:
             print(f"Heavy deepfake model unavailable, using heuristic fallback: {e}")
             _processor = None
             _model = None
+            _model_name = None
     return _processor, _model
 
 def _heuristic_fake_probability(image_path: str) -> dict:
@@ -59,6 +93,28 @@ def analyze_image(image_path: str):
     """
     processor, model = get_deepfake_model()
     try:
+        if processor == "deepfakebench" and model is not None:
+            import torch
+
+            image = Image.open(image_path).convert('RGB').resize((256, 256))
+            pixels = np.asarray(image, dtype=np.float32) / 255.0
+            tensor = torch.from_numpy(pixels).permute(2, 0, 1).unsqueeze(0)
+            tensor = (tensor - 0.5) / 0.5
+            device = next(model.parameters()).device
+            with torch.no_grad():
+                fake_prob = torch.softmax(model(tensor.to(device)), dim=1)[0, 1].item()
+            return {
+                "manipulation_signal": float(fake_prob),
+                "method": "DeepfakeBench Xception",
+                "model_status": "Advanced ML model available",
+                "model_name": "DeepfakeBench Xception",
+                "model_version": "v1.0.1 xception_best.pth (CC BY-NC 4.0)",
+                "timestamp": datetime.utcnow().isoformat(),
+                "predicted_label": "fake" if fake_prob > 0.5 else "real",
+                "suspicious": fake_prob > 0.5,
+                "note": "Face-manipulation detector; evaluate results as a signal, not proof.",
+            }
+
         if processor is not None and model is not None:
             import torch
 
@@ -110,12 +166,21 @@ def analyze_image(image_path: str):
 def analyze_frames(frame_paths: list):
     """
     Analyzes multiple frames and aggregates the score.
+    frame_paths may be strings or dicts with path/timestamp.
     """
     results = []
-    for fp in frame_paths:
+    for item in frame_paths:
+        if isinstance(item, dict):
+            fp = item.get("path")
+            timestamp = item.get("timestamp")
+        else:
+            fp = item
+            timestamp = None
         res = analyze_image(fp)
         if res:
             res["frame_path"] = fp
+            if timestamp is not None:
+                res["timestamp"] = timestamp
             results.append(res)
             
     if not results:
@@ -136,9 +201,10 @@ def analyze_frames(frame_paths: list):
     }
 
 def release_models():
-    global _processor, _model
+    global _processor, _model, _model_name
     _processor = None
     _model = None
+    _model_name = None
     try:
         import torch
 

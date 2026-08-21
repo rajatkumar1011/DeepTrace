@@ -74,11 +74,16 @@ def generate_face_embedding(image_path: str):
 def compare_faces(embedding1, embedding2) -> float:
     """
     Computes cosine similarity between two embeddings.
+    Returns 0.0 on dimension mismatch so stale fallback embeddings do not crash the pipeline.
     """
     if not embedding1 or not embedding2:
         return 0.0
     emb1 = np.array(embedding1)
     emb2 = np.array(embedding2)
+    if emb1.shape != emb2.shape:
+        # Fallback embeddings are 4096-d, FaceNet is 512-d; treat as incompatible.
+        print(f"Face embedding dimension mismatch {emb1.shape} vs {emb2.shape}; returning 0.0")
+        return 0.0
     
     # Cosine similarity
     dot_product = np.dot(emb1, emb2)
@@ -89,7 +94,7 @@ def compare_faces(embedding1, embedding2) -> float:
         return 0.0
         
     similarity = dot_product / (norm1 * norm2)
-    return float(similarity)
+    return float(np.clip(similarity, -1.0, 1.0))
 
 def release_models():
     global _heavy_models

@@ -91,10 +91,8 @@ def _fallback_audio_embedding(audio_path: str):
         print(f"Fallback voice embedding unavailable: {e}")
         return None
 
-def compare_voices(audio_path1: str, audio_path2: str) -> float:
-    """
-    Compare two audio files and return a similarity score (-1 to 1).
-    """
+def compare_voices(audio_path1: str, audio_path2: str) -> dict:
+    """Compare two audio files and describe the method actually used."""
     model = get_speaker_model()
     try:
         if model is not None:
@@ -102,14 +100,32 @@ def compare_voices(audio_path1: str, audio_path2: str) -> float:
                 audio_path1.replace("\\", "/"),
                 audio_path2.replace("\\", "/"),
             )
-            return float(score.item())
+            return {
+                "similarity_score": float(score.item()),
+                "prediction": bool(prediction.item()) if hasattr(prediction, "item") else bool(prediction),
+                "method": "ECAPA speaker verification",
+                "model_status": "Advanced ML model available",
+                "model_name": "ECAPA-TDNN / ECAPA-VOXCELEB",
+                "model_version": "speechbrain/spkrec-ecapa-voxceleb",
+            }
 
         emb1 = generate_voice_embedding(audio_path1)
         emb2 = generate_voice_embedding(audio_path2)
-        return compare_voice_embeddings(emb1, emb2)
+        return {
+            "similarity_score": compare_voice_embeddings(emb1, emb2),
+            "method": "Lightweight fallback",
+            "model_status": "Advanced ML model unavailable on this machine",
+            "model_name": "Lightweight fallback",
+            "model_version": "deterministic spectral summary",
+        }
     except Exception as e:
         print(f"Error comparing voices: {e}")
-        return 0.0
+        return {
+            "similarity_score": None,
+            "method": "Unavailable",
+            "model_status": "Voice comparison failed",
+            "error": str(e),
+        }
 
 def compare_voice_embeddings(embedding1, embedding2) -> float:
     import numpy as np
