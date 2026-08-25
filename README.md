@@ -8,10 +8,14 @@ This repository is designed for local Windows development by a small team. It do
 
 ```text
 backend/                 FastAPI API, database models, services, requirements
+backend/services/        Analysis modules (identity, deepfake, voice, audio, localization,
+                         provenance, similarity, tracing, integrity, risk, report, response)
+backend/tests/           pytest suite (deterministic logic, security boundaries, API contracts)
 frontend/                Next.js application and package-lock.json
+scripts/                 benchmark.py, smoke_e2e.py, and local maintenance utilities
 data/demo/               Small demo assets such as lena.jpg
-
-docs/                    Project documentation
+data/benchmark/          Operator-supplied evaluation dataset and its results (both git-ignored)
+docs/                    Project documentation, including ENGINEERING_REPORT.md
 ```
 
 Runtime databases, uploads, extracted evidence, generated reports, model caches, virtual environments, and `node_modules` are intentionally local and ignored by Git.
@@ -96,14 +100,28 @@ npm --prefix frontend start
 
 ## Environment Variables
 
-No application secrets are required for the local demo. `.env.example` contains variable names only. The ML libraries recognize these optional cache variables:
+No application secrets are required, and DeepTrace uses no API keys of any kind — all
+analysis runs locally on CPU. `.env.example` documents every variable the code actually
+reads, with its default; copy it to `.env` only if you need to change one.
 
-- `HF_HOME`: Hugging Face cache directory
-- `TORCH_HOME`: PyTorch checkpoint cache directory
-- `TRANSFORMERS_CACHE`: Transformers cache directory
-- `FFMPEG_PATH`: local FFmpeg path for team-machine documentation; the current service expects `ffmpeg` on `PATH`
+Backend behaviour:
 
-Copy `.env.example` to `.env` only when a machine needs custom cache locations. Never add real credentials or tokens to Git.
+- `DEEPTRACE_DB_PATH`: SQLite file (default: `deeptrace.db` at the repository root)
+- `DEEPTRACE_MAX_UPLOAD_MB`: suspicious-media size cap (default `200`)
+- `DEEPTRACE_MAX_REFERENCE_MB`: reference image/audio size cap (default `25`)
+- `DEEPTRACE_FRAME_SAMPLES`: frames sampled per video (default `12`)
+- `DEEPTRACE_CORS_ORIGINS`: comma-separated allowed origins (default `http://localhost:3000,http://127.0.0.1:3000`)
+
+Tooling and caches:
+
+- `FFMPEG_PATH`: absolute path to `ffmpeg`; blank uses `PATH`
+- `HF_HOME`, `TORCH_HOME`, `TRANSFORMERS_CACHE`: model cache locations
+
+Frontend (`frontend/.env.local`):
+
+- `NEXT_PUBLIC_API_BASE_URL`: backend origin (default `http://localhost:8000`)
+
+Never add real credentials or tokens to Git.
 
 ## ML Model Setup
 
@@ -135,25 +153,105 @@ non-commercial research/evaluation unless you obtain separate permission.
 
 ## Demo Workflow
 
-The repository includes small demo assets:
+The repository includes small demo assets, offered in the UI as one-click chips so the
+demo needs no local media:
 
 - `data/demo/lena.jpg`: reference face image
-- `data/test_video.mp4`: small suspicious-media demo video
+- `data/demo/reference.wav`, `data/demo/suspicious_audio.wav`: reference and suspicious audio
+- `data/test_video.mp4`: suspicious-media demo video
 
-Run both services, then:
+Run both services, open `http://127.0.0.1:3000`, then:
 
-1. Open the frontend.
-2. Select **Protected Identity**.
-3. Enter a name and upload `data/demo/lena.jpg`.
-4. Select **New Investigation**.
-5. Upload `data/test_video.mp4` and select the enrolled identity.
-6. Click **Start Investigation**.
-7. Open the generated Analysis view and click **Run Analysis**.
-8. Review model names, frame-level outputs, metadata, evidence hashes, risk factors, and unavailable modules.
-9. Open **Timeline**, **Evidence**, and **Similarity**.
-10. Open **Report**, generate the PDF, and download it.
+1. Click **Start evidence collection**.
+2. **Step 1 — Who is being impersonated?** Choose an existing protected identity, or
+   **Add a new one** and supply a name plus a reference photo (`data/demo/lena.jpg`).
+   Optionally add a reference voice sample.
+3. Tick the consent box. Enrolment is refused without it: biometric templates are only
+   stored with recorded consent, and the consent text version is stored alongside them.
+   Choosing **Continue without identity comparison** skips enrolment entirely — the file
+   is still preserved and the other forensic checks still run.
+4. Click **Continue**.
+5. **Step 2 — Add the suspicious media.** Upload a file or click a demo chip.
+6. Optionally paste public `https://` URLs where copies are visible. DeepTrace retrieves
+   only what you point it at, over HTTPS, refusing private and loopback addresses.
+7. Click **Continue**, review **Step 3**, then click **Create case and begin analysis**.
+8. Watch the progress bar. Each module reports its own stage; analysis runs in the
+   background and the page polls for updates.
+9. **Findings** tab: plain-language per-module results, and the risk explanation showing
+   each signal's effective weight plus every excluded signal and the reason it was excluded.
+10. **Flagged frames**: suspicious time windows and the localization overlays.
+11. **Audio & sync**: voice comparison, audio editing indicators, A/V consistency.
+12. **Metadata**: container/codec metadata and C2PA Content Credentials.
+13. **Evidence & integrity**: the preserved artifact list. Click **Run verification** to
+    re-hash every file on disk and compare it against the digest recorded at preservation.
+14. **Tracing**: results for any URLs supplied, plus similar media held in other local cases.
+15. **Next steps**: case-specific guidance, the evidence package to attach, and official
+    reporting routes.
+16. In the sidebar, click **Generate evidence report** and download the PDF.
 
-The demo video may not contain an identifiable face or audio stream. In that case, the corresponding module reports that the reference or media signal is unavailable. To demonstrate voice verification, enroll a reference WAV file and upload an audio/video file with a usable audio stream.
+A module reports itself unavailable when its input is genuinely missing — for example the
+demo video has no audio track and no detectable face, so voice, A/V consistency and
+identity matching all report unavailable with a stated reason. That is the intended
+behaviour: an unavailable module is neither evidence of authenticity nor of manipulation,
+and it is excluded from the risk score rather than scored as zero. To demonstrate voice
+verification, enrol a reference WAV and submit media with a usable audio stream.
+
+## Tests
+
+```powershell
+backend\venv\Scripts\python.exe -m pytest
+```
+
+The suite covers deterministic logic and boundaries that must hold regardless of which
+models are installed: filename sanitisation and path traversal, upload size caps,
+server-side hashing, SSRF URL validation, evidence tamper detection, risk-fusion
+arithmetic and exclusion honesty, benchmark statistics, and API validation/error paths.
+It uses a throwaway database via `DEEPTRACE_DB_PATH` and never touches real case data.
+
+The model-backed happy path is covered separately, against a running server:
+
+```powershell
+backend\venv\Scripts\python.exe scripts\smoke_e2e.py
+```
+
+## Evaluation and Benchmarking
+
+DeepTrace ships **no accuracy figures**. `GET /api/benchmark` reports
+`available: false` until you evaluate the detectors against your own labelled data:
+
+```powershell
+backend\venv\Scripts\python.exe scripts\benchmark.py
+```
+
+Place authentic media in `data/benchmark/dataset/real/` and manipulated media in
+`data/benchmark/dataset/fake/`. With no dataset present the script writes nothing and
+prints instructions, so the API keeps honestly reporting that no benchmark has been run.
+
+Results are written to `data/benchmark/latest.json` and include the confusion matrix at
+the operating threshold, accuracy with a 95% Wilson confidence interval, precision,
+recall, specificity, F1, ROC AUC, a threshold sweep, per-class score distributions, the
+face-detection rate, and a fingerprint of the evaluated file set. Every figure comes from
+running the real pipeline on your files. Both the dataset and the results are git-ignored.
+
+Optionally add `data/benchmark/identity_pairs.csv` (`image_a,image_b,same_person`, paths
+relative to `data/benchmark/pairs/`) to evaluate the face-matching threshold.
+
+## What DeepTrace Does Not Claim
+
+DeepTrace presents forensic **indicators** for investigator review. It does not claim, and
+must not be presented as providing:
+
+- 100% deepfake detection, or a binary real/fake verdict
+- internet-wide search, monitoring or surveillance
+- identification of who created or uploaded the media
+- access to private platform APIs or any authenticated system
+- guaranteed legal admissibility of the preserved evidence
+- definitive proof of impersonation from an AI score alone
+
+Integrity verification proves the internal consistency of the local evidence store. It
+does not provide third-party timestamping, notarisation or tamper-proof custody. Reporting
+remains an official process performed by the user or an authorised investigator; DeepTrace
+prepares the evidence package and points to the correct routes.
 
 ## Troubleshooting
 
@@ -195,5 +293,6 @@ Before pushing to GitHub:
 - Keep `backend/requirements.txt` and `frontend/package-lock.json` tracked.
 - Keep `data/demo/` demo inputs tracked if they are approved for sharing.
 - Do not commit `backend/venv`, `frontend/node_modules`, `.next`, databases, uploads, evidence, reports, pretrained model files, caches, `.env`, or secrets.
+- Do not commit `data/benchmark/` contents. Evaluation media and metrics are specific to one operator and one machine; committing `latest.json` would ship accuracy figures that do not describe anyone else's environment.
 - Run `git status --short` and inspect the result.
 - Do not commit from the demo machine unless the team explicitly agrees.

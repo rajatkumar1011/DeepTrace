@@ -28,11 +28,19 @@ import {
   UserRoundCheck,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AnalysisProgress } from "@/components/AnalysisProgress";
+import { AudioPanel } from "@/components/AudioPanel";
 import { EmptyState } from "@/components/EmptyState";
 import { Footer } from "@/components/Footer";
+import { GuidancePanel } from "@/components/GuidancePanel";
 import { Header } from "@/components/Header";
+import { IntegrityPanel } from "@/components/IntegrityPanel";
+import { MetadataPanel } from "@/components/MetadataPanel";
+import { RiskExplanation } from "@/components/RiskExplanation";
 import { RiskPanel } from "@/components/RiskPanel";
 import { StatusPill } from "@/components/StatusPill";
+import { SuspiciousFramesPanel } from "@/components/SuspiciousFramesPanel";
+import { TracePanel } from "@/components/TracePanel";
 import {
   ACCEPTED_MEDIA,
   ANALYSIS_POLL_INTERVAL_MS,
@@ -40,22 +48,27 @@ import {
   API_PATHS,
   EXTERNAL_LINKS,
   MODULE_LABELS,
+  MODULE_STATUS_COPY,
 } from "@/config/constants";
 import { getApiError } from "@/lib/api/client";
 import {
   createInvestigation,
   enrollIdentity,
   generateReport,
+  getConsentText,
   getDashboardStats,
+  getDemoAssets,
   getIdentities,
   getInvestigation,
   getInvestigations,
   getTimeline,
   startAnalysis,
 } from "@/lib/api/deeptrace";
-import { formatBytes, formatDate, formatPercent, shortHash } from "@/lib/format";
+import { formatBytes, formatDate, formatPercent } from "@/lib/format";
+import { num, str } from "@/lib/modules";
 import type {
   DashboardStats,
+  DemoAsset,
   IdentityItem,
   InvestigationDetail,
   InvestigationItem,
@@ -69,6 +82,8 @@ const emptyStats: DashboardStats = {
   high_risk_findings: 0,
   protected_identities: 0,
 };
+
+type CaseTab = "findings" | "frames" | "audio" | "technical" | "evidence" | "tracing" | "next";
 
 export default function DeepTraceApp() {
   const [view, setView] = useState<ViewKey>("home");
@@ -270,9 +285,21 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
   const [name, setName] = useState("");
   const [referenceImage, setReferenceImage] = useState<File | null>(null);
   const [referenceAudio, setReferenceAudio] = useState<File | null>(null);
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [consentText, setConsentText] = useState<{ version: string; text: string } | null>(null);
   const [suspiciousFile, setSuspiciousFile] = useState<File | null>(null);
+  const [sourceUrls, setSourceUrls] = useState("");
+  const [demoAssets, setDemoAssets] = useState<DemoAsset[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void getConsentText().then(setConsentText).catch(() => setConsentText(null));
+      void getDemoAssets().then((payload) => setDemoAssets(payload.assets)).catch(() => setDemoAssets([]));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const identitySummary = useMemo(() => {
     if (identityMode === "skip") return "No identity comparison";
@@ -285,7 +312,14 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
   const continueFromIdentity = () => {
     setError("");
     if (identityMode === "existing" && !existingIdentityId) return setError("Choose a reference identity or select the skip option.");
-    if (identityMode === "new" && (!name.trim() || !referenceImage)) return setError("Add a name and a clear reference photo, or choose ‘Continue without identity comparison’. ");
+    if (identityMode === "new") {
+      if (!name.trim() || !referenceImage) {
+        return setError("Add a name and a clear reference photo, or choose ‘Continue without identity comparison’.");
+      }
+      if (!consentGiven) {
+        return setError("A reference face or voice sample is only enrolled with recorded consent. Tick the consent box to continue.");
+      }
+    }
     setStep(2);
   };
 
@@ -293,6 +327,19 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
     setError("");
     if (!suspiciousFile) return setError("Choose the suspicious image, video or audio file you want to preserve.");
     setStep(3);
+  };
+
+  /** Load a bundled demo file as the submission, so the demo path needs no local media. */
+  const loadDemoAsset = async (asset: DemoAsset) => {
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}${asset.url}`);
+      if (!response.ok) throw new Error(`Demo asset returned HTTP ${response.status}`);
+      const blob = await response.blob();
+      setSuspiciousFile(new File([blob], asset.filename, { type: blob.type }));
+    } catch (assetError) {
+      setError(getApiError(assetError, "The demo file could not be loaded from the backend."));
+    }
   };
 
   const submit = async () => {
@@ -303,10 +350,10 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
       let identityId: number | null = identityMode === "existing" ? existingIdentityId : null;
       if (identityMode === "new") {
         if (!referenceImage) throw new Error("Reference image is missing.");
-        const identity = await enrollIdentity({ name: name.trim(), referenceImage, referenceAudio });
+        const identity = await enrollIdentity({ name: name.trim(), referenceImage, referenceAudio, consentGiven });
         identityId = identity.id;
       }
-      const investigation = await createInvestigation({ file: suspiciousFile, identityId });
+      const investigation = await createInvestigation({ file: suspiciousFile, identityId, sourceUrls });
       try {
         await startAnalysis(investigation.id);
       } catch {
@@ -364,11 +411,29 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
           )}
 
           {identityMode === "new" && (
-            <div className="form-grid">
-              <div className="form-field span-2"><label htmlFor="name">Name or case label</label><input id="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="For example: My identity" /></div>
-              <FileField label="Reference face photo" hint="Required · use a clear, front-facing original photo" accept={ACCEPTED_MEDIA.image} file={referenceImage} onChange={setReferenceImage} />
-              <FileField label="Reference voice sample" hint="Optional · a clean recording improves voice comparison" accept={ACCEPTED_MEDIA.audio} file={referenceAudio} onChange={setReferenceAudio} />
-            </div>
+            <>
+              <div className="form-grid">
+                <div className="form-field span-2"><label htmlFor="name">Name or case label</label><input id="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="For example: My identity" /></div>
+                <FileField label="Reference face photo" hint="Required · use a clear, front-facing original photo" accept={ACCEPTED_MEDIA.image} file={referenceImage} onChange={setReferenceImage} />
+                <FileField label="Reference voice sample" hint="Optional · a clean recording improves voice comparison" accept={ACCEPTED_MEDIA.audio} file={referenceAudio} onChange={setReferenceAudio} />
+              </div>
+
+              <div className="consent-box">
+                <label>
+                  <input type="checkbox" checked={consentGiven} onChange={(event) => setConsentGiven(event.target.checked)} />
+                  <span>
+                    <strong>I consent to enrolling this reference sample.</strong>
+                    {consentText && <small>Consent notice version {consentText.version} — recorded with the enrollment.</small>}
+                  </span>
+                </label>
+                {consentText && (
+                  <details>
+                    <summary>Read the consent notice</summary>
+                    <p>{consentText.text}</p>
+                  </details>
+                )}
+              </div>
+            </>
           )}
 
           <div className="flow-actions end"><button className="btn btn-primary" onClick={continueFromIdentity}>Continue <ArrowRight size={17} /></button></div>
@@ -386,7 +451,34 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
               <span>{suspiciousFile ? `${formatBytes(suspiciousFile.size)} selected` : "Image, video or audio"}</span>
             </label>
           </div>
-          <div className="support-note"><Info size={17} /><span>If this came from social media, also keep the post URL, username, date/time and screenshots. The current backend preserves the uploaded media; source-URL tracing is a separate integration.</span></div>
+
+          {demoAssets.length > 0 && (
+            <div className="demo-picker">
+              <strong>No file to hand? Use a bundled sample.</strong>
+              <p>These are demo <em>inputs</em> only. Every score, hash and finding shown afterwards is computed live from the file you pick.</p>
+              <div className="chip-row">
+                {demoAssets.map((asset) => (
+                  <button className="chip chip-button" key={asset.filename} onClick={() => loadDemoAsset(asset)}>
+                    {asset.filename} · {formatBytes(asset.size_bytes)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="form-field">
+            <label htmlFor="source-urls">Where did you see it? (optional)</label>
+            <textarea
+              id="source-urls"
+              rows={2}
+              value={sourceUrls}
+              onChange={(event) => setSourceUrls(event.target.value)}
+              placeholder="https://example.com/the-post — one per line"
+            />
+            <small>Recorded with the case. You can also ask DeepTrace to fetch and compare a public HTTPS copy later, from the case&rsquo;s Tracing tab.</small>
+          </div>
+
+          <div className="support-note"><Info size={17} /><span>If this came from social media, also keep screenshots, the username and the date/time. DeepTrace preserves the uploaded media and can compare copies you point it at; it does not search the internet on your behalf.</span></div>
           <div className="flow-actions"><button className="btn btn-ghost" onClick={() => setStep(1)}><ChevronLeft size={17} /> Back</button><button className="btn btn-primary" onClick={continueFromMedia}>Continue <ArrowRight size={17} /></button></div>
         </div>
       )}
@@ -398,6 +490,7 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
             <ReviewRow label="Reference identity" value={identitySummary} />
             <ReviewRow label="Suspicious media" value={suspiciousFile?.name || "—"} />
             <ReviewRow label="File size" value={formatBytes(suspiciousFile?.size)} />
+            <ReviewRow label="Source noted" value={sourceUrls.trim() ? `${sourceUrls.trim().split(/\s+/).length} URL(s)` : "None"} />
             <ReviewRow label="What happens next" value="Integrity hash → forensic analysis → evidence package → report" />
           </div>
           <div className="consent-note"><LockKeyhole size={19} /><div><strong>Your evidence is treated separately from the AI result.</strong><p>A model score does not overwrite the preserved original. DeepTrace keeps the evidence integrity hash and analytical findings as distinct records.</p></div></div>
@@ -452,9 +545,20 @@ function CasesView({ investigations, onOpenCase, onStart }: { investigations: In
   );
 }
 
+const CASE_TABS: { key: CaseTab; label: string }[] = [
+  { key: "findings", label: "Findings" },
+  { key: "frames", label: "Flagged frames" },
+  { key: "audio", label: "Audio & sync" },
+  { key: "technical", label: "Metadata" },
+  { key: "evidence", label: "Evidence & integrity" },
+  { key: "tracing", label: "Tracing" },
+  { key: "next", label: "Next steps" },
+];
+
 function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => void; onRefreshShared: () => void }) {
   const [investigation, setInvestigation] = useState<InvestigationDetail | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [tab, setTab] = useState<CaseTab>("findings");
   const [loading, setLoading] = useState(true);
   const [actionBusy, setActionBusy] = useState(false);
   const [reportReady, setReportReady] = useState(false);
@@ -465,6 +569,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
       const [detail, events] = await Promise.all([getInvestigation(id), getTimeline(id)]);
       setInvestigation(detail);
       setTimeline(events);
+      setReportReady(detail.report_available);
       setError("");
       return detail;
     } catch (loadError) {
@@ -516,6 +621,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
   const modules = investigation.analysis_results || {};
   const moduleEntries = Object.entries(MODULE_LABELS).filter(([key]) => modules[key]);
   const evidence = investigation.evidence || [];
+  const completed = investigation.status === "completed";
 
   return (
     <section className="page-shell section-block case-page">
@@ -524,100 +630,125 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
         <div>
           <span className="eyebrow">Case #{investigation.id}</span>
           <h1>{investigation.filename}</h1>
-          <div className="case-meta-line"><span>{investigation.media_type}</span><span>•</span><span>{formatBytes(investigation.file_size_bytes)}</span><span>•</span><span>{formatDate(investigation.created_at)}</span></div>
+          <div className="case-meta-line">
+            <span className="media-kind">{investigation.media_type}</span><span>•</span>
+            <span>{formatBytes(investigation.file_size_bytes)}</span><span>•</span>
+            <span>{formatDate(investigation.created_at)}</span>
+            {investigation.identity_name && <><span>•</span><span>vs {investigation.identity_name}</span></>}
+          </div>
         </div>
         <StatusPill status={investigation.status} />
       </div>
 
       {error && <div className="form-alert"><AlertCircle size={18} /><span>{error}</span></div>}
 
-      {investigation.status === "analyzing" && (
-        <div className="analysis-progress"><LoaderCircle className="spin" size={22} /><div><strong>DeepTrace is analyzing the preserved media.</strong><p>You can stay on this page. Findings refresh automatically every few seconds.</p></div></div>
-      )}
+      <AnalysisProgress investigation={investigation} />
       {investigation.status === "pending" && (
         <div className="analysis-progress pending"><Info size={22} /><div><strong>Your evidence has been preserved, but analysis has not started.</strong><p>Start the forensic analysis when you are ready.</p></div><button className="btn btn-primary" onClick={runAnalysis} disabled={actionBusy}>Start analysis</button></div>
+      )}
+      {investigation.status === "failed" && (
+        <div className="flow-actions end"><button className="btn btn-secondary" onClick={runAnalysis} disabled={actionBusy}><RefreshCw size={16} /> Retry analysis</button></div>
       )}
 
       <div className="case-main-grid">
         <div className="case-main-column">
-          <section className="content-card">
-            <div className="content-card-heading"><div><span>Plain-language assessment</span><h2>What DeepTrace found</h2></div><button className="icon-button" onClick={load} aria-label="Refresh case"><RefreshCw size={17} /></button></div>
-            <RiskPanel level={investigation.risk_level} score={investigation.overall_risk_score} />
+          <nav className="case-tabs" aria-label="Case sections">
+            {CASE_TABS.map((item) => (
+              <button key={item.key} className={tab === item.key ? "active" : ""} onClick={() => setTab(item.key)} aria-current={tab === item.key}>
+                {item.label}
+              </button>
+            ))}
+          </nav>
 
-            {moduleEntries.length > 0 ? (
-              <div className="finding-list">
-                {moduleEntries.map(([key, copy]) => {
-                  const analysis = modules[key];
-                  const score = analysis?.score;
-                  return (
-                    <div className="finding-row" key={key}>
-                      <span className="finding-icon"><SearchCheck size={19} /></span>
-                      <div className="finding-copy"><strong>{copy.title}</strong><p>{plainModuleResult(key, score, analysis?.data)}</p></div>
-                      <span className="finding-score">{formatPercent(score)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="inline-empty"><Clock3 size={19} /> Findings will appear here after analysis is complete.</div>
-            )}
+          {tab === "findings" && (
+            <>
+              <section className="content-card">
+                <div className="content-card-heading"><div><span>Plain-language assessment</span><h2>What DeepTrace found</h2></div><button className="icon-button" onClick={load} aria-label="Refresh case"><RefreshCw size={17} /></button></div>
+                <RiskPanel level={investigation.risk_level} score={investigation.overall_risk_score} />
 
-            {moduleEntries.length > 0 && (
-              <details className="technical-details">
-                <summary>Show technical model details</summary>
-                <div className="technical-grid">
-                  {moduleEntries.map(([key, copy]) => {
-                    const analysis = modules[key];
-                    return (
-                      <div key={key} className="technical-card">
-                        <strong>{copy.title}</strong>
-                        <span>Score: {formatPercent(analysis.score)}</span>
-                        <span>Confidence: {formatPercent(analysis.confidence)}</span>
-                        <span>Method: {String(analysis.data?.method || analysis.data?.model_name || "Available backend method")}</span>
-                        {analysis.data?.model_status ? <span>Status: {String(analysis.data.model_status)}</span> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
-            )}
-          </section>
-
-          <section className="content-card">
-            <div className="content-card-heading"><div><span>Preserved artifacts</span><h2>Evidence inventory</h2></div><span className="count-badge">{evidence.length} items</span></div>
-            {evidence.length === 0 ? <div className="inline-empty"><FileCheck2 size={19} /> No evidence artifacts listed yet.</div> : (
-              <div className="evidence-list">
-                {evidence.map((item) => (
-                  <div className="evidence-row" key={item.id}>
-                    <span className="evidence-icon"><FileCheck2 size={19} /></span>
-                    <div><strong>{item.type === "original" ? "Original uploaded media" : item.type === "frame" ? "Extracted video frame" : item.type}</strong><small>{item.timestamp_offset !== null ? `Timestamp ${item.timestamp_offset.toFixed(2)} seconds` : "Preserved artifact"}</small></div>
-                    <code>{shortHash(item.sha256)}</code>
+                {moduleEntries.length > 0 ? (
+                  <div className="finding-list">
+                    {moduleEntries.map(([key, copy]) => {
+                      const analysis = modules[key];
+                      const statusCopy = MODULE_STATUS_COPY[analysis.status] || { label: analysis.status, tone: "muted" as const };
+                      return (
+                        <div className="finding-row" key={key}>
+                          <span className="finding-icon"><SearchCheck size={19} /></span>
+                          <div className="finding-copy">
+                            <strong>{copy.title} <em className={`status-tag tone-${statusCopy.tone}`}>{statusCopy.label}</em></strong>
+                            <p>{plainModuleResult(key, analysis.status, analysis.score, analysis.data)}</p>
+                          </div>
+                          <span className="finding-score">{analysis.status === "completed" ? formatPercent(analysis.score) : "—"}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
-              </div>
-            )}
-          </section>
+                ) : (
+                  <div className="inline-empty"><Clock3 size={19} /> Findings will appear here after analysis is complete.</div>
+                )}
 
-          <section className="content-card">
-            <div className="content-card-heading"><div><span>Chain of actions</span><h2>Investigation timeline</h2></div></div>
-            {timeline.length === 0 ? <div className="inline-empty"><Clock3 size={19} /> Timeline events will appear as the case progresses.</div> : (
-              <div className="timeline-simple">
-                {timeline.map((event) => <div key={event.id}><span className="timeline-dot" /><div><strong>{humanizeEvent(event.event_type, event.description)}</strong><small>{formatDate(event.created_at)}</small></div></div>)}
-              </div>
-            )}
-          </section>
+                {moduleEntries.length > 0 && (
+                  <details className="technical-details">
+                    <summary>Show technical model details</summary>
+                    <div className="technical-grid">
+                      {moduleEntries.map(([key, copy]) => {
+                        const analysis = modules[key];
+                        const data = analysis.data || {};
+                        return (
+                          <div key={key} className="technical-card">
+                            <strong>{copy.title}</strong>
+                            <span>Status: {analysis.status}</span>
+                            <span>Score: {analysis.status === "completed" ? formatPercent(analysis.score) : "Not available"}</span>
+                            <span>Confidence: {formatPercent(analysis.confidence)}</span>
+                            <span>Method: {str(data, "method") || str(data, "model_name") || "Not recorded"}</span>
+                            {str(data, "model_version") && <span>Version: {str(data, "model_version")}</span>}
+                            {num(data, "threshold") !== null && <span>Threshold: {num(data, "threshold")}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
+
+                <p className="micro-disclaimer">
+                  These are forensic indicators produced by research models on a local CPU. They are not a verdict, and a
+                  module marked unavailable is neither evidence of authenticity nor evidence of manipulation.
+                </p>
+              </section>
+
+              <RiskExplanation investigation={investigation} />
+
+              <section className="content-card">
+                <div className="content-card-heading"><div><span>Chain of actions</span><h2>Investigation timeline</h2></div><span className="count-badge">{timeline.length} events</span></div>
+                {timeline.length === 0 ? <div className="inline-empty"><Clock3 size={19} /> Timeline events will appear as the case progresses.</div> : (
+                  <div className="timeline-simple">
+                    {timeline.map((event) => <div key={event.id}><span className="timeline-dot" /><div><strong>{humanizeEvent(event.event_type, event.description)}</strong><small>{event.description}</small><small>{formatDate(event.created_at)}</small></div></div>)}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+
+          {tab === "frames" && <SuspiciousFramesPanel investigation={investigation} />}
+          {tab === "audio" && <AudioPanel investigation={investigation} />}
+          {tab === "technical" && <MetadataPanel investigation={investigation} />}
+          {tab === "evidence" && <IntegrityPanel investigationId={investigation.id} evidence={evidence} />}
+          {tab === "tracing" && <TracePanel investigation={investigation} onChanged={load} />}
+          {tab === "next" && <GuidancePanel investigationId={investigation.id} ready={completed} />}
         </div>
 
         <aside className="case-side-column">
           <section className="content-card sticky-card">
             <div className="side-heading"><Fingerprint size={20} /><div><span>Evidence integrity</span><h2>Original file hash</h2></div></div>
-            <p className="side-copy">This SHA-256 value fingerprints the exact file received by DeepTrace.</p>
+            <p className="side-copy">This SHA-256 value fingerprints the exact file received by DeepTrace. It was computed server-side as the upload was written to disk.</p>
             <code className="hash-box">{investigation.sha256_hash}</code>
             <button className="btn btn-secondary btn-full" onClick={copyHash}><Copy size={16} /> Copy hash</button>
             <div className="evidence-facts">
               <div><span>Resolution</span><strong>{investigation.resolution || "—"}</strong></div>
               <div><span>Duration</span><strong>{investigation.duration_seconds ? `${investigation.duration_seconds.toFixed(2)} s` : "—"}</strong></div>
               <div><span>Frames preserved</span><strong>{investigation.frames_extracted ?? 0}</strong></div>
+              <div><span>Artifacts preserved</span><strong>{evidence.length}</strong></div>
+              <div><span>Audio stream</span><strong>{investigation.has_audio_stream === null ? "—" : investigation.has_audio_stream ? "Present" : "None"}</strong></div>
             </div>
           </section>
 
@@ -625,12 +756,12 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
             <div className="side-heading"><ClipboardCheck size={20} /><div><span>Next step</span><h2>Prepare to report</h2></div></div>
             <ol className="next-actions">
               <li><span>1</span><div><strong>Keep screenshots and source URLs</strong><p>Save the post/page URL, username, date/time and any threats or messages.</p></div></li>
-              <li><span>2</span><div><strong>Generate the DeepTrace report</strong><p>Package the analysis, evidence integrity information and case timeline.</p></div></li>
+              <li><span>2</span><div><strong>Generate the DeepTrace report</strong><p>Twenty sections covering evidence hashes, per-module findings, the timeline and reporting routes.</p></div></li>
               <li><span>3</span><div><strong>File or support your official complaint</strong><p>Use the National Cyber Crime Reporting Portal or the appropriate police/cyber cell process.</p></div></li>
             </ol>
-            <button className="btn btn-primary btn-full" onClick={buildReport} disabled={actionBusy || investigation.status !== "completed"}>{actionBusy ? <><LoaderCircle className="spin" size={17} /> Preparing…</> : <><Download size={17} /> Generate evidence report</>}</button>
+            <button className="btn btn-primary btn-full" onClick={buildReport} disabled={actionBusy || !completed}>{actionBusy ? <><LoaderCircle className="spin" size={17} /> Preparing…</> : <><Download size={17} /> {reportReady ? "Regenerate report" : "Generate evidence report"}</>}</button>
             {reportReady && <a className="btn btn-success btn-full" href={`${API_BASE_URL}${API_PATHS.reportDownload(id)}`} target="_blank" rel="noreferrer"><Download size={17} /> Download PDF report</a>}
-            <a className="btn btn-secondary btn-full" href={EXTERNAL_LINKS.cybercrimePortal} target="_blank" rel="noreferrer">Official cybercrime portal <ExternalLink size={16} /></a>
+            <button className="btn btn-secondary btn-full" onClick={() => setTab("next")}><FileCheck2 size={16} /> See recommended next steps</button>
             <p className="micro-disclaimer">DeepTrace does not submit complaints automatically and does not claim that model outputs are legal proof.</p>
           </section>
         </aside>
@@ -639,20 +770,42 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
   );
 }
 
-function plainModuleResult(key: string, score: number | null, data?: Record<string, unknown>) {
-  if (score === null || score === undefined) {
+/**
+ * Plain-language sentence for one module. A module that did not produce a result
+ * says so and says why — it is never described as if it had found nothing.
+ */
+function plainModuleResult(key: string, status: string, score: number | null, data?: Record<string, unknown> | null) {
+  const payload = data || {};
+
+  if (status !== "completed") {
+    const reason = str(payload, "reason") || str(payload, "details") || str(payload, "status");
     if (key === "provenance") {
-      const found = Boolean(data?.credentials_found);
-      return found ? "Content Credentials were detected. They may provide useful provenance context." : "No usable Content Credentials were found in this file.";
+      return payload.credentials_found === true
+        ? "Content Credentials were detected. They may provide useful provenance context."
+        : "No Content Credentials are attached to this file. That is normal for media shared on social platforms and is not itself suspicious.";
     }
-    return "This signal was not available for the current media or environment.";
+    if (status === "not_applicable") return reason || "This check does not apply to the submitted media.";
+    return reason || "This signal was not available for the current media or environment.";
   }
+
+  if (score === null || score === undefined) {
+    return str(payload, "summary") || str(payload, "interpretation") || MODULE_LABELS[key]?.plain || "Completed.";
+  }
+
   const pct = Math.round(score * 100);
-  if (key === "deepfake") return pct >= 75 ? "Strong manipulation indicators were detected." : pct >= 50 ? "Some manipulation indicators were detected and deserve review." : "Few manipulation indicators were detected by this module.";
-  if (key === "identity") return pct >= 75 ? "The face appears strongly similar to the protected reference identity." : pct >= 50 ? "The face shows moderate similarity to the protected reference." : "The visual identity match is weak or inconclusive.";
-  if (key === "voice") return pct >= 75 ? "The voice appears strongly similar to the protected reference sample." : pct >= 50 ? "The voice shows moderate similarity to the reference sample." : "The voice match is weak, unavailable, or inconclusive.";
+  if (key === "deepfake") {
+    const frames = num(payload, "suspicious_frame_count");
+    const total = num(payload, "frames_analyzed");
+    const detail = frames !== null && total !== null ? ` ${frames} of ${total} sampled frames crossed the threshold.` : "";
+    if (pct >= 75) return `Strong manipulation indicators were detected.${detail}`;
+    if (pct >= 50) return `Some manipulation indicators were detected and deserve review.${detail}`;
+    return `Few manipulation indicators were detected by this module.${detail}`;
+  }
+  if (key === "identity") return str(payload, "interpretation") || (pct >= 60 ? "The face is similar to the protected reference identity." : "The visual identity match is below the same-person threshold.");
+  if (key === "voice") return str(payload, "interpretation") || (pct >= 25 ? "The voice is similar to the reference sample." : "The voice similarity is below the same-speaker threshold.");
+  if (key === "audio") return `${num(payload, "discontinuity_count") ?? 0} abrupt level change(s) were measured in the audio track.`;
   if (key === "consistency") return pct >= 70 ? "Audio and visual activity appear broadly consistent in the sampled regions." : "Some audio-video inconsistency was observed and may deserve review.";
-  if (key === "similarity") return pct >= 80 ? "A strong local similarity match was found against evidence already preserved in DeepTrace." : "No strong local match was found in the current DeepTrace evidence database.";
+  if (key === "similarity") return str(payload, "summary") || (pct >= 80 ? "A strong local similarity match was found against evidence already preserved in DeepTrace." : "No strong local match was found in the current DeepTrace evidence database.");
   return MODULE_LABELS[key]?.plain || "Review this forensic signal together with the preserved evidence.";
 }
 
@@ -663,13 +816,18 @@ function humanizeEvent(type: string, fallback: string) {
     hash_generated: "Integrity hash generated",
     metadata_extracted: "Media metadata recorded",
     frames_sampled: "Video evidence frames preserved",
+    audio_extracted: "Audio track extracted",
+    audio_analysis: "Audio forensics completed",
     analysis_started: "Forensic analysis started",
     manipulation_analysis: "Manipulation analysis completed",
+    manipulation_localization: "Manipulation localization completed",
     identity_analysis: "Identity comparison completed",
-    audio_analysis: "Voice analysis completed",
+    voice_analysis: "Speaker verification completed",
     av_consistency: "Audio-video consistency reviewed",
     provenance_check: "Content provenance checked",
     similarity_search: "Local similarity search completed",
+    source_traced: "External copy traced and compared",
+    integrity_verified: "Evidence integrity re-verified",
     risk_assessment: "Overall assessment calculated",
     evidence_preserved: "Evidence preservation completed",
     analysis_completed: "Case analysis completed",
@@ -685,14 +843,14 @@ function HowItWorksView({ onStart }: { onStart: () => void }) {
       <div className="section-heading center wide"><span>How DeepTrace fits into the response process</span><h1>Evidence first. Analysis second. Reporting remains official.</h1><p>The interface is deliberately simpler than a traditional forensic dashboard because a victim may be stressed, angry, frightened or unsure what to do next.</p></div>
 
       <div className="help-steps">
-        <HelpStep icon={<FolderLock />} number="1" title="Preserve the media" body="DeepTrace saves the uploaded original and calculates a SHA-256 integrity hash. For videos, selected frames can also be preserved as evidence artifacts." />
-        <HelpStep icon={<SearchCheck />} number="2" title="Run separate forensic checks" body="Manipulation detection, identity matching, voice verification, audio-video consistency, provenance and local similarity are kept as separate signals rather than collapsing everything into one fake/real answer." />
-        <HelpStep icon={<ClipboardCheck />} number="3" title="Build an evidence package" body="The case combines file details, hashes, preserved artifacts, analysis results and a chronological timeline in one report." />
+        <HelpStep icon={<FolderLock />} number="1" title="Preserve the media" body="DeepTrace saves the uploaded original and calculates a SHA-256 integrity hash server-side. For videos, sampled frames, the extracted audio track and manipulation overlays are preserved as separate artifacts, each with its own digest." />
+        <HelpStep icon={<SearchCheck />} number="2" title="Run separate forensic checks" body="Manipulation detection, localization, face matching, speaker verification, audio forensics, audio-video consistency, provenance and local copy tracing are kept as separate signals rather than collapsing everything into one fake/real answer." />
+        <HelpStep icon={<ClipboardCheck />} number="3" title="Build an evidence package" body="The case combines file details, hashes, preserved artifacts, per-module findings, a weighted risk explanation and a chronological timeline into one twenty-section report." />
         <HelpStep icon={<ExternalLink />} number="4" title="Use the official reporting channel" body="DeepTrace is a pre-reporting support layer. Official complaints should still go through the National Cyber Crime Reporting Portal or the appropriate law-enforcement channel." />
       </div>
 
       <div className="boundaries-card">
-        <div><CircleHelp size={22} /><div><strong>What DeepTrace does not claim</strong><p>No internet-wide surveillance, no creator identification, no 100% accurate deepfake verdict, and no automatic police or platform submission.</p></div></div>
+        <div><CircleHelp size={22} /><div><strong>What DeepTrace does not claim</strong><p>No internet-wide surveillance, no creator identification, no 100% accurate deepfake verdict, no guaranteed legal admissibility, and no automatic police or platform submission. Copy tracing compares only the specific public URLs or files you provide.</p></div></div>
         <button className="btn btn-primary" onClick={onStart}>Start evidence collection <ArrowRight size={17} /></button>
       </div>
     </section>

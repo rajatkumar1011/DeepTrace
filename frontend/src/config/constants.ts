@@ -11,6 +11,7 @@ export const API_BASE_URL =
 export const API_PATHS = {
   health: "/api/health",
   stats: "/api/dashboard/stats",
+  consentText: "/api/consent-text",
   identities: "/api/identities",
   enrollIdentity: "/api/identity/enroll",
   investigate: "/api/investigate",
@@ -18,8 +19,13 @@ export const API_PATHS = {
   investigation: (id: number) => `/api/investigation/${id}`,
   analyze: (id: number) => `/api/investigation/${id}/analyze`,
   timeline: (id: number) => `/api/investigation/${id}/timeline`,
+  evidence: (id: number) => `/api/investigation/${id}/evidence`,
+  verify: (id: number) => `/api/investigation/${id}/verify`,
+  trace: (id: number) => `/api/investigation/${id}/trace`,
+  guidance: (id: number) => `/api/investigation/${id}/response-guidance`,
   report: (id: number) => `/api/investigation/${id}/report`,
   reportDownload: (id: number) => `/api/report/${id}/download`,
+  demoAssets: "/api/demo/assets",
 } as const;
 
 export const EXTERNAL_LINKS = {
@@ -83,6 +89,10 @@ export const MODULE_LABELS: Record<string, { title: string; plain: string; inver
     title: "Voice identity match",
     plain: "Compares available speech with the reference voice sample, when one is available.",
   },
+  audio: {
+    title: "Audio editing indicators",
+    plain: "Looks for abrupt level changes, clipping and re-encoding traces in the audio track.",
+  },
   consistency: {
     title: "Audio-video consistency",
     plain: "Checks whether visual and audio activity appear broadly aligned. Higher consistency is generally less suspicious.",
@@ -96,4 +106,21 @@ export const MODULE_LABELS: Record<string, { title: string; plain: string; inver
     title: "Known-copy similarity",
     plain: "Looks for exact or perceptually similar evidence already preserved in this local DeepTrace database.",
   },
+};
+
+/** Module status values the backend reports, and how to describe each honestly. */
+export const MODULE_STATUS_COPY: Record<string, { label: string; tone: "ok" | "muted" | "warn" }> = {
+  completed: { label: "Completed", tone: "ok" },
+  not_applicable: { label: "Not applicable", tone: "muted" },
+  unavailable: { label: "Unavailable", tone: "warn" },
+  no_credentials: { label: "None present", tone: "muted" },
+  failed: { label: "Error", tone: "warn" },
+  not_run: { label: "Not run", tone: "muted" },
+};
+
+export const INTEGRITY_COPY: Record<string, { label: string; tone: "ok" | "warn" | "muted" }> = {
+  verified: { label: "Verified", tone: "ok" },
+  mismatch: { label: "Hash mismatch", tone: "warn" },
+  missing: { label: "File missing", tone: "warn" },
+  no_recorded_hash: { label: "No recorded hash", tone: "muted" },
 };

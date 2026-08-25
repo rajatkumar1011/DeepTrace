@@ -18,8 +18,10 @@ backend/venv/
 *.pem
 *.key
 
-# Databases and local runtime state
+# Databases and local runtime state. The *.db.* form matters: a backup such as
+# deeptrace.db.pre-repair.bak holds real case data and is not matched by *.db.
 *.db
+*.db.*
 *.sqlite
 *.sqlite3
 
@@ -32,6 +34,14 @@ data/reports/
 backend/data/reports/
 pretrained_models/
 backend/pretrained_models/
+
+# Benchmark input and output. Metrics are specific to the operator's dataset and
+# machine, so they are never committed: DeepTrace ships no accuracy figures, and
+# /api/benchmark reports available:false until the operator runs the script.
+data/benchmark/dataset/
+data/benchmark/pairs/
+data/benchmark/identity_pairs.csv
+data/benchmark/latest.json
 
 # Model and tool caches
 .cache/
