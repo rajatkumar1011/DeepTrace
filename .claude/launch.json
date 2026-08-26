@@ -5,13 +5,15 @@
       "name": "backend",
       "runtimeExecutable": "backend/venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "uvicorn", "--app-dir", "backend", "main:app", "--host", "127.0.0.1", "--port", "8000"],
-      "port": 8000
+      "port": 8000,
+      "autoPort": false
     },
     {
       "name": "frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
-      "port": 3000
+      "port": 3000,
+      "autoPort": false
     }
   ]
 }

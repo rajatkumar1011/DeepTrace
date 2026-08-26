@@ -3,6 +3,7 @@
 import {
   AlertCircle,
   ArrowRight,
+  Camera,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -21,6 +22,7 @@ import {
   Info,
   LoaderCircle,
   LockKeyhole,
+  Mic,
   RefreshCw,
   SearchCheck,
   ShieldCheck,
@@ -30,6 +32,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnalysisProgress } from "@/components/AnalysisProgress";
 import { AudioPanel } from "@/components/AudioPanel";
+import { CameraCapture } from "@/components/CameraCapture";
 import { EmptyState } from "@/components/EmptyState";
 import { Footer } from "@/components/Footer";
 import { GuidancePanel } from "@/components/GuidancePanel";
@@ -41,6 +44,7 @@ import { RiskPanel } from "@/components/RiskPanel";
 import { StatusPill } from "@/components/StatusPill";
 import { SuspiciousFramesPanel } from "@/components/SuspiciousFramesPanel";
 import { TracePanel } from "@/components/TracePanel";
+import { VoiceRecorder } from "@/components/VoiceRecorder";
 import {
   ACCEPTED_MEDIA,
   ANALYSIS_POLL_INTERVAL_MS,
@@ -287,6 +291,8 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
   const [referenceAudio, setReferenceAudio] = useState<File | null>(null);
   const [consentGiven, setConsentGiven] = useState(false);
   const [consentText, setConsentText] = useState<{ version: string; text: string } | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [recorderOpen, setRecorderOpen] = useState(false);
   const [suspiciousFile, setSuspiciousFile] = useState<File | null>(null);
   const [sourceUrls, setSourceUrls] = useState("");
   const [demoAssets, setDemoAssets] = useState<DemoAsset[]>([]);
@@ -414,8 +420,36 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
             <>
               <div className="form-grid">
                 <div className="form-field span-2"><label htmlFor="name">Name or case label</label><input id="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="For example: My identity" /></div>
-                <FileField label="Reference face photo" hint="Required · use a clear, front-facing original photo" accept={ACCEPTED_MEDIA.image} file={referenceImage} onChange={setReferenceImage} />
-                <FileField label="Reference voice sample" hint="Optional · a clean recording improves voice comparison" accept={ACCEPTED_MEDIA.audio} file={referenceAudio} onChange={setReferenceAudio} />
+                <FileField
+                  label="Reference face photo"
+                  hint="Required · use a clear, front-facing original photo"
+                  accept={ACCEPTED_MEDIA.image}
+                  file={referenceImage}
+                  onChange={setReferenceImage}
+                  capture={
+                    <div className="capture-row">
+                      <span className="or">or</span>
+                      <button type="button" className="capture-btn" onClick={() => setCameraOpen(true)}>
+                        <Camera size={14} /> Take a photo now
+                      </button>
+                    </div>
+                  }
+                />
+                <FileField
+                  label="Reference voice sample"
+                  hint="Optional · a clean recording improves voice comparison"
+                  accept={ACCEPTED_MEDIA.audio}
+                  file={referenceAudio}
+                  onChange={setReferenceAudio}
+                  capture={
+                    <div className="capture-row">
+                      <span className="or">or</span>
+                      <button type="button" className="capture-btn" onClick={() => setRecorderOpen(true)}>
+                        <Mic size={14} /> Record my voice now
+                      </button>
+                    </div>
+                  }
+                />
               </div>
 
               <div className="consent-box">
@@ -497,6 +531,11 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
           <div className="flow-actions"><button className="btn btn-ghost" onClick={() => setStep(2)} disabled={busy}><ChevronLeft size={17} /> Back</button><button className="btn btn-primary btn-lg" onClick={submit} disabled={busy}>{busy ? <><LoaderCircle className="spin" size={18} /> Creating your case…</> : <>Create case and begin analysis <ArrowRight size={18} /></>}</button></div>
         </div>
       )}
+
+      {/* Live capture modals. Each hands a File back to the form; the enrollment
+          request uploads it normally so the server hashes what it receives. */}
+      {cameraOpen && <CameraCapture onCapture={setReferenceImage} onClose={() => setCameraOpen(false)} />}
+      {recorderOpen && <VoiceRecorder onRecorded={setReferenceAudio} onClose={() => setRecorderOpen(false)} />}
     </section>
   );
 }
@@ -505,13 +544,14 @@ function StepItem({ number, active, complete, label }: { number: number; active:
   return <li className={`${active ? "active" : ""} ${complete ? "complete" : ""}`}><span>{complete ? <Check size={17} /> : number}</span><small>{label}</small></li>;
 }
 
-function FileField({ label, hint, accept, file, onChange }: { label: string; hint: string; accept: string; file: File | null; onChange: (file: File | null) => void }) {
+function FileField({ label, hint, accept, file, onChange, capture }: { label: string; hint: string; accept: string; file: File | null; onChange: (file: File | null) => void; capture?: React.ReactNode }) {
   return (
     <div className="form-field file-field">
       <label>{label}</label>
       <div className="compact-file-input">
         <input type="file" accept={accept} onChange={(event) => onChange(event.target.files?.[0] || null)} />
       </div>
+      {capture}
       <small>{file ? `${file.name} · ${formatBytes(file.size)}` : hint}</small>
     </div>
   );
@@ -738,7 +778,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
         </div>
 
         <aside className="case-side-column">
-          <section className="content-card sticky-card">
+          <section className="content-card">
             <div className="side-heading"><Fingerprint size={20} /><div><span>Evidence integrity</span><h2>Original file hash</h2></div></div>
             <p className="side-copy">This SHA-256 value fingerprints the exact file received by DeepTrace. It was computed server-side as the upload was written to disk.</p>
             <code className="hash-box">{investigation.sha256_hash}</code>

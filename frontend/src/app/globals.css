@@ -93,6 +93,8 @@ main { flex: 1; }
 .btn-secondary:hover { border-color: var(--navy); background: #f8fbff; }
 .btn-ghost { background: transparent; color: var(--navy); border-color: transparent; }
 .btn-success { background: var(--success); color: #fff; border-color: var(--success); }
+.btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-danger:hover { background: #99180f; }
 .btn-full { width: 100%; }
 
 .section-block { padding: 64px 0; }
@@ -217,7 +219,23 @@ main { flex: 1; }
 .analysis-progress p { margin: 2px 0 0; font-size: 12px; color: #5d6d80; }
 .case-main-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
 .case-main-column { display: grid; gap: 18px; }
-.case-side-column { display: grid; gap: 18px; }
+.case-side-column {
+  display: grid;
+  gap: 18px;
+  /* The sidebar travels as a single unit. Making only the first card sticky let it
+     slide down over the report card as the page scrolled; pinning the whole column
+     keeps both cards together. align-content:start stops the grid stretching the
+     cards to fill the pinned height. */
+  align-content: start;
+  position: sticky;
+  top: 155px;
+  /* If the two cards are taller than the viewport the column scrolls internally,
+     so the report button at the bottom always stays reachable. */
+  max-height: calc(100vh - 175px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
 .content-card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 22px; box-shadow: 0 4px 16px rgba(31,56,85,.035); }
 .content-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
 .content-card-heading h2, .side-heading h2 { margin: 3px 0 0; color: #1b355a; font-size: 22px; }
@@ -261,7 +279,6 @@ main { flex: 1; }
 .timeline-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--blue); border: 2px solid #fff; box-shadow: 0 0 0 2px #b6cae1; margin-top: 4px; flex: 0 0 auto; z-index: 1; }
 .timeline-simple strong { display: block; color: #2a405a; font-size: 12px; }
 .timeline-simple small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
-.sticky-card { position: sticky; top: 155px; }
 .side-heading { display: flex; gap: 10px; align-items: flex-start; }
 .side-heading > svg { color: var(--navy); margin-top: 3px; }
 .side-heading h2 { font-size: 19px; }
@@ -314,7 +331,9 @@ main { flex: 1; }
   .case-row { grid-template-columns: auto 1fr auto; }
   .case-row .case-media, .case-row .risk-mini { display: none; }
   .case-main-grid { grid-template-columns: 1fr; }
-  .sticky-card { position: static; }
+  /* Single-column layout: the sidebar becomes part of the normal page flow, so
+     pinning it would trap the cards mid-scroll. */
+  .case-side-column { position: static; max-height: none; overflow-y: visible; }
 }
 
 @media (max-width: 760px) {
@@ -534,4 +553,71 @@ main { flex: 1; }
   .verify-bar { flex-direction: column; align-items: stretch; }
   .case-tabs { overflow-x: auto; flex-wrap: nowrap; }
   .case-tabs button { white-space: nowrap; }
+}
+
+/* ─── In-page camera and microphone capture ──────────────────────────────────
+   Live capture for the Step 1 reference sample. The captured file is handed to
+   the enrollment form and uploaded by the normal request, so hashing still
+   happens server-side on the bytes actually received. */
+
+.capture-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.capture-row .or { color: var(--muted); font-size: 11px; font-weight: 700; }
+.capture-btn {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  background: var(--blue-soft); color: var(--navy); border: 1px solid #b9cee6;
+  border-radius: 6px; padding: 6px 11px; font-size: 12px; font-weight: 750;
+  transition: .16s ease;
+}
+.capture-btn:hover { background: #dcebfa; border-color: var(--blue); }
+
+.capture-backdrop {
+  position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+  background: rgba(12, 26, 46, .62); padding: 20px; backdrop-filter: blur(2px);
+}
+.capture-modal {
+  background: #fff; border-radius: 10px; border: 1px solid var(--line);
+  box-shadow: 0 22px 60px rgba(9, 26, 51, .3);
+  width: min(100%, 540px); max-height: calc(100vh - 40px); overflow-y: auto; padding: 22px;
+}
+.capture-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.capture-modal-head > div { display: flex; align-items: center; gap: 9px; color: var(--navy); }
+.capture-modal-head strong { font-size: 17px; color: #1b355a; }
+.capture-hint { color: var(--muted); font-size: 12.5px; margin: 11px 0 15px; line-height: 1.55; }
+
+.capture-stage {
+  position: relative; border-radius: 8px; overflow: hidden; background: #0d1b2e;
+  aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center;
+}
+.capture-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.capture-loading {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 9px; color: rgba(255, 255, 255, .88); font-size: 13px; font-weight: 650;
+}
+.capture-error {
+  background: var(--danger-bg); border: 1px solid #f0b4ae; color: #8c1c13;
+  border-radius: 7px; padding: 12px 14px; font-size: 13px; line-height: 1.5;
+}
+.capture-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 16px; }
+.capture-actions .btn { flex: 1 1 auto; }
+
+.recorder-stage {
+  display: flex; align-items: center; gap: 15px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--surface-soft); padding: 16px;
+}
+.recorder-orb {
+  width: 54px; height: 54px; border-radius: 50%; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--blue-soft); color: var(--navy);
+}
+.recorder-orb.live { background: var(--danger-bg); color: var(--danger); animation: recorder-pulse 1.4s ease-in-out infinite; }
+@keyframes recorder-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(180, 35, 24, .34); }
+  50% { box-shadow: 0 0 0 10px rgba(180, 35, 24, 0); }
+}
+.recorder-readout strong { display: block; color: #1b355a; font-size: 15px; }
+.recorder-readout small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+
+@media (max-width: 560px) {
+  .capture-modal { padding: 17px; }
+  .capture-actions .btn { flex: 1 1 100%; }
 }

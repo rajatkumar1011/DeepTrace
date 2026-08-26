@@ -48,7 +48,7 @@ Sixteen analysis services under `backend/services/`, all wired into the API and 
 
 Supporting layers: `backend/main.py` (22 endpoints, background analysis, upload validation, sanitisation), `backend/models/schema.py` (SQLAlchemy 2.0 ORM), `backend/paths.py` (path anchoring and traversal containment), `backend/database.py`.
 
-Frontend: 8 analysis panels plus shared components under `frontend/src/components/`, a 3-step guided intake, and a 7-tab case view.
+Frontend: 8 analysis panels plus shared components under `frontend/src/components/`, a 3-step guided intake, and a 7-tab case view. Reference samples can be supplied either as file uploads or captured in the page (`CameraCapture.tsx`, `VoiceRecorder.tsx`); captured media is handed to the existing enrollment form as a `File`, so hashing still happens server-side on the bytes actually received.
 
 ---
 
@@ -72,6 +72,7 @@ frontend/src/components/AnalysisProgress.tsx      frontend/src/components/AudioP
 frontend/src/components/GuidancePanel.tsx         frontend/src/components/IntegrityPanel.tsx
 frontend/src/components/MetadataPanel.tsx         frontend/src/components/RiskExplanation.tsx
 frontend/src/components/SuspiciousFramesPanel.tsx frontend/src/components/TracePanel.tsx
+frontend/src/components/CameraCapture.tsx         frontend/src/components/VoiceRecorder.tsx
 frontend/src/lib/modules.ts
 ```
 
