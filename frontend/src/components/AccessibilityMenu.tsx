@@ -1,6 +1,13 @@
 "use client";
 
-import { Accessibility, Contrast, RotateCcw, Snowflake, Underline, X } from "lucide-react";
+import {
+  FaUniversalAccess as Accessibility,
+  FaAdjust as Contrast,
+  FaUndoAlt as RotateCcw,
+  FaSnowflake as Snowflake,
+  FaUnderline as Underline,
+  FaTimes as X,
+} from "react-icons/fa";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 /**

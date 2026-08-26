@@ -1,4 +1,4 @@
-import { FlaskConical, Scale } from "lucide-react";
+import { FaFlask as FlaskConical, FaBalanceScale as Scale } from "react-icons/fa";
 import { dataOf, nested, num, rows, str } from "@/lib/modules";
 import type { InvestigationDetail } from "@/types";
 

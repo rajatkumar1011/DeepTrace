@@ -1,15 +1,15 @@
 "use client";
 
 import {
-  AlertTriangle,
-  BarChart3,
-  CircleHelp,
-  FlaskConical,
-  Gauge,
-  LoaderCircle,
-  ShieldAlert,
-  Target,
-} from "lucide-react";
+  FaExclamationTriangle as AlertTriangle,
+  FaChartBar as BarChart3,
+  FaQuestionCircle as CircleHelp,
+  FaFlask as FlaskConical,
+  FaTachometerAlt as Gauge,
+  FaSpinner as LoaderCircle,
+  FaShieldAlt as ShieldAlert,
+  FaBullseye as Target,
+} from "react-icons/fa";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { getApiError } from "@/lib/api/client";

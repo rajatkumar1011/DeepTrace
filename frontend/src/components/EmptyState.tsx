@@ -1,4 +1,4 @@
-import { FileSearch } from "lucide-react";
+import { FaSearch as FileSearch } from "react-icons/fa";
 
 export function EmptyState({ title, body, action }: { title: string; body: string; action?: React.ReactNode }) {
   return (

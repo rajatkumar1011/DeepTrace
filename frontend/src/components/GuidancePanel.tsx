@@ -1,6 +1,12 @@
 "use client";
 
-import { AlertTriangle, ExternalLink, LoaderCircle, ListChecks, Route } from "lucide-react";
+import {
+  FaExclamationTriangle as AlertTriangle,
+  FaExternalLinkAlt as ExternalLink,
+  FaSpinner as LoaderCircle,
+  FaTasks as ListChecks,
+  FaRoute as Route,
+} from "react-icons/fa";
 import { useCallback, useEffect, useState } from "react";
 import { EXTERNAL_LINKS } from "@/config/constants";
 import { getApiError } from "@/lib/api/client";

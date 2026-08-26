@@ -1,4 +1,4 @@
-import { AlertCircle, LoaderCircle } from "lucide-react";
+import { FaExclamationCircle as AlertCircle, FaSpinner as LoaderCircle } from "react-icons/fa";
 import type { InvestigationDetail } from "@/types";
 
 /**
