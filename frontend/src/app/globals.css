@@ -438,6 +438,12 @@ main { flex: 1; }
 .mini-table-row > span { overflow: hidden; text-overflow: ellipsis; }
 .mini-table-row code { background: #f4f6f8; border-radius: 3px; padding: 2px 4px; font-size: 10px; }
 
+/* A full-width continuation of the row above, for the prose a grid cell would
+   truncate — the basis of a finding is not something to hide behind an ellipsis. */
+.mini-table-note { display: flex; flex-direction: column; gap: 3px; padding: 0 12px 9px; font-size: 10.5px; line-height: 1.45; color: #5c6b7e; }
+.mini-table-note .note-muted { color: #8593a3; }
+.mini-table-note .note-flag { color: #9a5b12; font-weight: 700; }
+
 .kv-grid { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .kv-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 12px; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .kv-row:last-child { border-bottom: 0; }

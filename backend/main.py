@@ -1520,6 +1520,12 @@ async def run_trace(
         if outcome["status"] == "fetched":
             comparison = classify_copy(inv.sha256_hash, inv.perceptual_hash,
                                        original_fingerprint, outcome["file_path"], inv.media_type)
+            # Where the bytes actually came from. When a redirect was followed the
+            # requested URL is not the source of the file, and recording only the
+            # request would put a claim in the evidence store that the response
+            # never supported.
+            retrieved_from = outcome.get("final_url") or url
+            redirected = bool(outcome.get("redirected"))
             record.file_path = outcome["file_path"]
             record.content_type = outcome.get("content_type")
             record.bytes_downloaded = outcome.get("bytes")
@@ -1531,7 +1537,13 @@ async def run_trace(
             record.details = {
                 "basis": comparison["basis"],
                 "audio_fingerprint_similarity": comparison["audio_fingerprint_similarity"],
+                # Which channels were actually comparable. "No match" over one
+                # channel is a different finding from "no match" over three.
+                "compared_channels": comparison["compared_channels"],
+                "comparison_scope": comparison["scope"],
                 "retrieved_at": utc_now().isoformat(timespec="seconds"),
+                "retrieved_from": retrieved_from,
+                "redirected": redirected,
                 "method": "Direct HTTPS GET of the supplied URL; size-capped and streamed to disk.",
             }
             db.commit()
@@ -1543,6 +1555,8 @@ async def run_trace(
                 perceptual_hash=comparison["perceptual_hash"],
                 metadata_json={
                     "source_url": url,
+                    "retrieved_from": retrieved_from,
+                    "redirected": redirected,
                     "content_type": outcome.get("content_type"),
                     "bytes": outcome.get("bytes"),
                     "match_type": comparison["match_type"],
@@ -1551,8 +1565,9 @@ async def run_trace(
             ))
             db.commit()
             add_timeline(db, inv.id, "source_traced",
-                         f"Retrieved a copy from {url}: {comparison['similarity_label']} "
-                         f"({comparison['basis']})")
+                         f"Retrieved a copy from {url}"
+                         + (f" (redirected to {retrieved_from})" if redirected else "")
+                         + f": {comparison['similarity_label']} ({comparison['basis']})")
         else:
             record.details = {
                 "attempted_at": utc_now().isoformat(timespec="seconds"),
@@ -1588,6 +1603,8 @@ async def run_trace(
             details={
                 "basis": comparison["basis"],
                 "audio_fingerprint_similarity": comparison["audio_fingerprint_similarity"],
+                "compared_channels": comparison["compared_channels"],
+                "comparison_scope": comparison["scope"],
                 "received_at": utc_now().isoformat(timespec="seconds"),
                 "method": "Investigator-supplied upload; hashed server-side on write.",
             },

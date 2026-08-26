@@ -1,7 +1,16 @@
-import { AudioLines, Waves } from "lucide-react";
+import { AudioLines, Info, Waves } from "lucide-react";
 import { API_BASE_URL } from "@/config/constants";
-import { clock, dataOf, nested, num, rows, str, strings } from "@/lib/modules";
+import { bool, clock, dataOf, nested, num, rows, str, strings } from "@/lib/modules";
 import type { InvestigationDetail } from "@/types";
+
+/** What the badge may claim, given only the module's own status. */
+function audioBadge(status: string | undefined) {
+  if (status === "completed") return "measured";
+  if (status === "not_applicable") return "no audio track";
+  if (status === "unavailable") return "not measured";
+  if (status === "failed") return "measurement failed";
+  return "not run";
+}
 
 /**
  * Audio forensics and audio-visual consistency, side by side. Both are
@@ -30,7 +39,7 @@ export function AudioPanel({ investigation }: { investigation: InvestigationDeta
           <span>Sound and synchronisation</span>
           <h2>Audio forensics</h2>
         </div>
-        <span className="count-badge"><Waves size={13} /> {audioModule?.status === "completed" ? "measured" : "no audio track"}</span>
+        <span className="count-badge"><Waves size={13} /> {audioBadge(audioModule?.status)}</span>
       </div>
 
       {audioModule?.status !== "completed" ? (
@@ -88,8 +97,18 @@ export function AudioPanel({ investigation }: { investigation: InvestigationDeta
         </div>
       ) : (
         <>
+          {/* The module decides whether face-vs-audio agreement means anything for
+              this media. When it does not, the number is still shown — but not as
+              a finding, because low alignment is normal in a voice-over or B-roll. */}
+          {bool(av, "alignment_applicable") === false && (
+            <div className="scope-note">
+              <Info size={17} />
+              <p>{str(av, "exclusion_reason") || "This alignment figure was excluded from the risk score."}</p>
+            </div>
+          )}
+
           <div className="stat-grid">
-            <Stat label="Alignment" value={num(av, "energy_alignment_score")?.toFixed(4) ?? "—"} hint={`${num(av, "samples_compared") ?? 0} timestamps compared`} />
+            <Stat label="Alignment" value={num(av, "energy_alignment_score")?.toFixed(4) ?? "—"} hint={`${num(av, "samples_agreed") ?? 0} of ${num(av, "samples_compared") ?? 0} timestamps agreed`} />
             <Stat label="Face present" value={num(av, "face_present_ratio") !== null ? `${Math.round((num(av, "face_present_ratio") as number) * 100)}%` : "—"} hint={`${num(av, "faces_detected_total") ?? 0} faces detected`} />
             <Stat label="Mismatched samples" value={String(num(av, "mismatch_count") ?? 0)} hint="face visible but audio silent, or vice versa" />
             <Stat

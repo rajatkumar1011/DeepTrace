@@ -878,6 +878,15 @@ function plainModuleResult(key: string, status: string, score: number | null, da
   }
 
   const pct = Math.round(score * 100);
+  // A module that completed may still have established that its own measurement
+  // does not describe this media — a speaker cosine from a half-second clip, an
+  // alignment figure from B-roll. It says so with `excluded_from_risk` and gives
+  // its reason, and that reason is the finding. Restating the raw number as a
+  // verdict here would contradict the module that made the measurement.
+  if (payload.excluded_from_risk === true) {
+    const withheld = str(payload, "exclusion_reason");
+    if (withheld) return withheld;
+  }
   if (key === "deepfake") {
     const frames = num(payload, "suspicious_frame_count");
     const total = num(payload, "frames_analyzed");
@@ -887,14 +896,27 @@ function plainModuleResult(key: string, status: string, score: number | null, da
     return `Few manipulation indicators were detected by this module.${detail}`;
   }
   if (key === "identity") return str(payload, "interpretation") || (pct >= 60 ? "The face is similar to the protected reference identity." : "The visual identity match is below the same-person threshold.");
-  if (key === "voice") return str(payload, "interpretation") || (pct >= 25 ? "The voice is similar to the reference sample." : "The voice similarity is below the same-speaker threshold.");
+  // The module's own `interpretation` is authoritative — it knows the threshold it
+  // was decided against and whether the clip was long enough to decide anything.
+  // The fallback deliberately does not guess a verdict from the score.
+  if (key === "voice") return str(payload, "interpretation") || "A speaker comparison was recorded; see the score and threshold below.";
   if (key === "audio") return `${num(payload, "discontinuity_count") ?? 0} abrupt level change(s) were measured in the audio track.`;
-  if (key === "consistency") return pct >= 70 ? "Audio and visual activity appear broadly consistent in the sampled regions." : "Some audio-video inconsistency was observed and may deserve review.";
+  // Low alignment is expected for voice-overs, reaction shots and B-roll, so the
+  // number alone does not support "inconsistency was observed". Where the module
+  // judged its measurement applicable it says so in `details`.
+  if (key === "consistency") {
+    return pct >= 70
+      ? "Audio and visual activity appear broadly consistent in the sampled regions."
+      : "Audio and visual activity agreed in a minority of sampled moments. This is common in legitimate edits such as voice-overs, so treat it as a supporting signal only.";
+  }
   if (key === "similarity") return str(payload, "summary") || (pct >= 80 ? "A strong local similarity match was found against evidence already preserved in DeepTrace." : "No strong local match was found in the current DeepTrace evidence database.");
   return MODULE_LABELS[key]?.plain || "Review this forensic signal together with the preserved evidence.";
 }
 
 function humanizeEvent(type: string, fallback: string) {
+  // Keys here must match the event types backend/main.py actually writes. An
+  // invented key is silently dead — `fallback` covers for it — so this list was
+  // taken from the add_timeline call sites rather than from what reads well.
   const labels: Record<string, string> = {
     investigation_created: "Case created",
     evidence_uploaded: "Original evidence received",
@@ -904,14 +926,18 @@ function humanizeEvent(type: string, fallback: string) {
     audio_extracted: "Audio track extracted",
     audio_analysis: "Audio forensics completed",
     analysis_started: "Forensic analysis started",
+    analysis_restarted: "Forensic analysis re-run",
     manipulation_analysis: "Manipulation analysis completed",
-    manipulation_localization: "Manipulation localization completed",
+    localization: "Manipulation localization completed",
     identity_analysis: "Identity comparison completed",
+    identity_attached: "Protected identity attached to case",
     voice_analysis: "Speaker verification completed",
     av_consistency: "Audio-video consistency reviewed",
     provenance_check: "Content provenance checked",
     similarity_search: "Local similarity search completed",
+    source_recorded: "Source URL recorded",
     source_traced: "External copy traced and compared",
+    source_trace_failed: "External copy could not be retrieved",
     integrity_verified: "Evidence integrity re-verified",
     risk_assessment: "Overall assessment calculated",
     evidence_preserved: "Evidence preservation completed",

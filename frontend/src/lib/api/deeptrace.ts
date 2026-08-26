@@ -103,14 +103,15 @@ export async function getCustodyRecord(id: number) {
   return (await api.get<CustodyRecord>(API_PATHS.custody(id))).data;
 }
 
-export async function getTrace(id: number) {
-  return (await api.get<TracePayload>(API_PATHS.trace(id))).data;
-}
-
 /**
  * Attach a copy for comparison — either a public HTTPS URL DeepTrace fetches
  * itself, or a file the investigator already holds. URL retrieval is validated
  * server-side; private, loopback and non-HTTPS targets are refused.
+ *
+ * There is no matching `getTrace` reader: the investigation detail response
+ * already carries the full `trace_sources` list, so a separate GET would be a
+ * second round trip for data the caller is holding. `GET .../trace` still
+ * exists server-side for API clients that want sources without the whole case.
  */
 export async function addTraceSource(
   id: number,

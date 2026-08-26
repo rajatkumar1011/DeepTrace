@@ -6,7 +6,7 @@ import { ACCEPTED_MEDIA } from "@/config/constants";
 import { getApiError } from "@/lib/api/client";
 import { addTraceSource } from "@/lib/api/deeptrace";
 import { formatBytes, shortHash } from "@/lib/format";
-import { dataOf, num, rows, str } from "@/lib/modules";
+import { bool, dataOf, num, rows, str, strings } from "@/lib/modules";
 import type { InvestigationDetail, TraceSource } from "@/types";
 
 /**
@@ -30,6 +30,7 @@ export function TracePanel({
   const [notice, setNotice] = useState("");
 
   const sources = investigation.trace_sources || [];
+  const compared = sources.filter((source) => source.retrieval_status === "fetched");
   const similarity = dataOf(investigation, "similarity");
   const localMatches = rows(similarity, "matches");
 
@@ -67,7 +68,9 @@ export function TracePanel({
           <span>Where else has this appeared?</span>
           <h2>Copy tracing</h2>
         </div>
-        <span className="count-badge"><GitCompareArrows size={13} /> {sources.length} source(s)</span>
+        <span className="count-badge">
+          <GitCompareArrows size={13} /> {sources.length} supplied · {compared.length} compared
+        </span>
       </div>
 
       <div className="scope-note">
@@ -112,18 +115,55 @@ export function TracePanel({
       {sources.length > 0 && (
         <div className="mini-table">
           <div className="mini-table-head"><span>Source</span><span>Retrieval</span><span>Similarity</span><span>Digest</span></div>
-          {sources.map((source) => (
-            <div className="mini-table-row" key={source.id}>
-              <span title={source.source_url || undefined}>{describeSource(source)}</span>
-              <span className={`verdict verdict-${source.retrieval_status === "fetched" ? "ok" : source.retrieval_status === "rejected" ? "warn" : "muted"}`}>
-                {source.retrieval_status || "unknown"}
-                {source.retrieval_error ? ` — ${source.retrieval_error}` : ""}
-              </span>
-              <span>{source.similarity_label || (source.similarity !== null ? source.similarity.toFixed(3) : "—")}</span>
-              <span><code>{shortHash(source.sha256)}</code></span>
-            </div>
-          ))}
+          {sources.map((source) => {
+            const details = source.details || {};
+            const channels = strings(details, "compared_channels");
+            const basis = str(details, "basis");
+            const retrievedFrom = str(details, "retrieved_from");
+            const redirected = bool(details, "redirected") === true;
+            return (
+              <div key={source.id}>
+                <div className="mini-table-row">
+                  <span title={source.source_url || undefined}>{describeSource(source)}</span>
+                  <span className={`verdict verdict-${source.retrieval_status === "fetched" ? "ok" : source.retrieval_status === "rejected" ? "warn" : "muted"}`}>
+                    {source.retrieval_status || "unknown"}
+                    {source.retrieval_error ? ` — ${source.retrieval_error}` : ""}
+                  </span>
+                  <span>{source.similarity_label || (source.similarity !== null ? source.similarity.toFixed(3) : "—")}</span>
+                  <span><code>{shortHash(source.sha256)}</code></span>
+                </div>
+                {(basis || channels.length > 0 || redirected) && (
+                  <div className="mini-table-note">
+                    {/* A redirect means the bytes did not come from the address that
+                        was typed in, which changes what this row is evidence of. */}
+                    {redirected && retrievedFrom && (
+                      <span className="note-flag">Redirected — bytes retrieved from {retrievedFrom}</span>
+                    )}
+                    {basis && <span>{basis}</span>}
+                    {/* Without this, "no match" over a single channel is
+                        indistinguishable from "no match" over three. */}
+                    {channels.length > 0 && (
+                      <span className="note-muted">Compared on: {channels.join(", ")}</span>
+                    )}
+                    {source.content_type && (
+                      <span className="note-muted">
+                        Server declared {source.content_type}
+                        {source.bytes_downloaded ? ` · ${formatBytes(source.bytes_downloaded)}` : ""}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+      )}
+
+      {compared.length > 0 && (
+        <p className="panel-note">
+          {str(compared[0].details || {}, "comparison_scope")
+            || "A comparison establishes whether two files are the same or visually alike. It does not establish who published either, which came first, or how the copy was obtained."}
+        </p>
       )}
 
       <div className="panel-divider" />
