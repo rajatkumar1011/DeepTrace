@@ -7,6 +7,20 @@ speaker decision at the model's own threshold.
 This module answers "does this voice match the enrolled person?" — it does not
 answer "was this voice synthesised?". DeepTrace ships no synthetic-speech
 classifier, and the payload says so rather than implying the capability.
+
+Two things are deliberately refused rather than approximated:
+
+* If ECAPA cannot be loaded, this module reports **unavailable**. There is a
+  deterministic spectral summary in here, and it is genuinely useful for
+  enrollment bookkeeping, but a spectral summary is not a speaker embedding. Were
+  its cosine published as ``voice_match_score`` the risk engine would fuse it as
+  "cosine similarity of speaker embeddings" against ECAPA's own threshold, and
+  the report would print it beside a real one. The number is kept, under a name
+  nothing fuses, and the status says plainly that no speaker comparison happened.
+* If the audio is shorter than a speaker model can work with, the score is
+  reported together with the measurement that undermines it, and the verdict is
+  inconclusive. A 0.4-second clip yields a confident-looking cosine; the duration
+  is the reason not to trust it, so it travels with the score.
 """
 
 import os
@@ -15,6 +29,15 @@ import numpy as np
 
 # ECAPA-VoxCeleb's published decision threshold for the verification task.
 ECAPA_THRESHOLD = 0.25
+
+# DeepTrace's own floor, not a published model specification. VoxCeleb test
+# segments are seconds long; below roughly a second there is not enough voiced
+# speech for a speaker embedding to mean much, and the score becomes a function
+# of the noise floor. Scores below this are reported with the duration and marked
+# inconclusive rather than withheld — an investigator should see both.
+MIN_RELIABLE_AUDIO_SECONDS = 1.0
+# Below this the comparison is refused outright: there is no utterance to embed.
+MIN_USABLE_AUDIO_SECONDS = 0.25
 
 _speaker_model = None
 _speaker_model_error = None
@@ -112,8 +135,24 @@ def compare_voice_embeddings(embedding1, embedding2) -> float:
     return float(np.clip(np.dot(a, b) / denom, -1.0, 1.0)) if denom else 0.0
 
 
+def audio_duration_seconds(audio_path: str) -> float | None:
+    """Decoded duration, or None when the file could not be decoded at all."""
+    from services.forensics import load_audio_samples
+
+    samples, sample_rate = load_audio_samples(audio_path)
+    if samples is None or not sample_rate or samples.size == 0:
+        return None
+    return round(float(samples.size) / float(sample_rate), 3)
+
+
 def compare_voices(reference_audio: str, subject_audio: str) -> dict:
-    """Compare two audio files and describe the method actually used."""
+    """Compare two audio files and describe the method actually used.
+
+    On the fallback path ``similarity_score`` is deliberately absent. The
+    spectral cosine is returned as ``spectral_summary_cosine`` instead, so that a
+    caller reaching for a speaker score finds nothing rather than finding a
+    different measurement wearing the same name.
+    """
     model = get_speaker_model()
     try:
         if model is not None:
@@ -133,19 +172,26 @@ def compare_voices(reference_audio: str, subject_audio: str) -> dict:
                 "model_version": "speechbrain/spkrec-ecapa-voxceleb",
             }
 
-        similarity = compare_voice_embeddings(
+        spectral = compare_voice_embeddings(
             generate_voice_embedding(reference_audio),
             generate_voice_embedding(subject_audio),
         )
         return {
-            "similarity_score": similarity,
+            "similarity_score": None,
+            "spectral_summary_cosine": round(float(spectral), 6),
             "prediction": None,
             "decision_threshold": None,
-            "method": "Lightweight fallback",
-            "model_status": "Advanced ML model unavailable on this machine",
-            "model_name": "Lightweight fallback",
-            "model_version": "deterministic spectral summary",
+            "method": "Not performed — ECAPA-TDNN could not be loaded",
+            "model_status": "Speaker verification model unavailable on this machine",
+            "model_name": None,
+            "model_version": None,
             "fallback_reason": _speaker_model_error,
+            "fallback_note": (
+                "A deterministic spectral summary of the two files was computed and agrees at "
+                f"{float(spectral):.3f}. That is a comparison of energy envelopes, not of speaker "
+                "identity: it responds to recording conditions and loudness, and it is reported "
+                "here only so the figure is not mistaken for a speaker match elsewhere."
+            ),
         }
     except Exception as error:
         print(f"Error comparing voices: {error}")
@@ -189,11 +235,29 @@ def verify_speaker(reference_audio: str | None, subject_audio: str | None,
 
     comparison = compare_voices(reference_audio, subject_audio)
     similarity = comparison.get("similarity_score")
+    subject_seconds = audio_duration_seconds(subject_audio)
+    reference_seconds = audio_duration_seconds(reference_audio)
+    audio_measured = {
+        "subject_seconds": subject_seconds,
+        "reference_seconds": reference_seconds,
+        "reliable_floor_seconds": MIN_RELIABLE_AUDIO_SECONDS,
+        "usable_floor_seconds": MIN_USABLE_AUDIO_SECONDS,
+        "floor_basis": (
+            "DeepTrace's own conservative floor, not a published ECAPA specification. "
+            "VoxCeleb evaluation segments are several seconds long."
+        ),
+    }
+
     if similarity is None:
+        # Includes the case where ECAPA could not be loaded. That is an
+        # unavailable module, not a completed one with a substitute number:
+        # nothing downstream may fuse or print a speaker score that no speaker
+        # model produced.
         return {
             "status": "unavailable",
             "voice_match_score": None,
             "audio_present": True,
+            "audio_measured": audio_measured,
             "reason": (
                 "Speaker verification could not be completed: "
                 f"{comparison.get('error') or comparison.get('model_status')}"
@@ -202,15 +266,50 @@ def verify_speaker(reference_audio: str | None, subject_audio: str | None,
             "excluded_from_risk": True,
         }
 
+    shortest = min([value for value in (subject_seconds, reference_seconds) if value is not None],
+                   default=None)
+    if shortest is not None and shortest < MIN_USABLE_AUDIO_SECONDS:
+        # Too little audio to embed. The model still returns a number; publishing
+        # it as a match score would be publishing a measurement of the noise floor.
+        return {
+            "status": "unavailable",
+            "voice_match_score": None,
+            "audio_present": True,
+            "audio_measured": audio_measured,
+            "reason": (
+                f"The shorter of the two recordings is {shortest:.2f}s, below the "
+                f"{MIN_USABLE_AUDIO_SECONDS:.2f}s minimum DeepTrace requires for a speaker "
+                "comparison. A score computed from this little audio would describe the "
+                "recording conditions rather than the speaker, so none is reported."
+            ),
+            "method": comparison.get("method"),
+            "model_name": comparison.get("model_name"),
+            "model_version": comparison.get("model_version"),
+            "excluded_from_risk": True,
+        }
+
     threshold = comparison.get("decision_threshold")
     prediction = comparison.get("prediction")
     if prediction is None and threshold is not None:
         prediction = similarity >= threshold
 
+    short_audio = shortest is not None and shortest < MIN_RELIABLE_AUDIO_SECONDS
+
     if threshold is None:
         interpretation = (
-            "The ECAPA speaker model is unavailable on this machine. The reported value comes from a "
-            "deterministic spectral summary and must NOT be read as a speaker-identity match."
+            "No decision threshold is available for the method that produced this value, so it "
+            "cannot be turned into a same-speaker judgement."
+        )
+        verdict = "inconclusive"
+    elif short_audio:
+        # The score is real and is reported. What it cannot carry is a verdict:
+        # the duration is the reason, and it travels with the number.
+        interpretation = (
+            f"Speaker similarity {similarity:.3f} was computed, but the shorter recording is only "
+            f"{shortest:.2f}s — under the {MIN_RELIABLE_AUDIO_SECONDS:.1f}s DeepTrace treats as the "
+            "floor for a dependable speaker comparison. Scores from clips this short move with "
+            "recording conditions, so the comparison is inconclusive regardless of which side of "
+            f"the {threshold:.2f} threshold the value falls on."
         )
         verdict = "inconclusive"
     elif prediction:
@@ -237,6 +336,8 @@ def verify_speaker(reference_audio: str | None, subject_audio: str | None,
         "status": "completed",
         "voice_match_score": round(similarity, 6),
         "audio_present": True,
+        "audio_measured": audio_measured,
+        "audio_long_enough": not short_audio,
         "same_speaker_prediction": bool(prediction) if prediction is not None else None,
         "verdict": verdict,
         "interpretation": interpretation,
@@ -246,7 +347,11 @@ def verify_speaker(reference_audio: str | None, subject_audio: str | None,
             "determine whether the audio was synthetically generated."
         ),
         **{k: v for k, v in comparison.items() if k != "similarity_score"},
-        "excluded_from_risk": False,
+        # An inconclusive verdict is not a finding the risk score may lean on. The
+        # number stays visible in the payload and the report; it just does not get
+        # a weight in fusion, and the reason above says why.
+        "excluded_from_risk": verdict == "inconclusive",
+        "exclusion_reason": (interpretation if verdict == "inconclusive" else None),
     }
 
 

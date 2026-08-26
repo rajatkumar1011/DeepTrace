@@ -51,6 +51,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "backend"))
 
 from paths import BENCHMARK_DIR  # noqa: E402
 from services import deepfake, forensics, identity  # noqa: E402
+from services.statistics import wilson_interval as _wilson_interval  # noqa: E402
 
 DATASET_DIR = os.path.join(BENCHMARK_DIR, "dataset")
 PAIRS_CSV = os.path.join(BENCHMARK_DIR, "identity_pairs.csv")
@@ -76,14 +77,14 @@ NO_DATASET_EXIT = 3
 # --------------------------------------------------------------------------- #
 
 def wilson_interval(successes: int, total: int, z: float = 1.96):
-    """95% Wilson score interval. Honest about small-sample uncertainty."""
-    if total == 0:
-        return None
-    p = successes / total
-    denominator = 1 + z * z / total
-    centre = (p + z * z / (2 * total)) / denominator
-    margin = z / denominator * math.sqrt(p * (1 - p) / total + z * z / (4 * total * total))
-    return [round(max(0.0, centre - margin), 4), round(min(1.0, centre + margin), 4)]
+    """95% Wilson score interval. Honest about small-sample uncertainty.
+
+    Delegates to services.statistics so the interval printed beside a benchmark
+    figure, a robustness figure and an A/V alignment figure is the same
+    calculation. Kept as a module-level name because that is how it is called
+    throughout this script and by tests/test_benchmark_stats.py.
+    """
+    return _wilson_interval(successes, total, z)
 
 
 def roc_auc(scores: list[float], labels: list[int]):

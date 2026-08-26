@@ -61,6 +61,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "backend"))
 from paths import BENCHMARK_DIR  # noqa: E402
 from services import audio as audio_service  # noqa: E402
 from services import deepfake, forensics  # noqa: E402
+from services.statistics import wilson_interval as wilson  # noqa: E402
 
 ROBUSTNESS_JSON = os.path.join(BENCHMARK_DIR, "robustness.json")
 SOURCE_DIR = os.path.join(BENCHMARK_DIR, "robustness_source")
@@ -661,16 +662,6 @@ def overall(summaries: list[dict]) -> dict | None:
                                       "mean_absolute_delta": worst["mean_absolute_delta"],
                                       "decision_agreement": worst["decision_agreement"]},
     }
-
-
-def wilson(successes: int, total: int, z: float = 1.96):
-    if total == 0:
-        return None
-    p = successes / total
-    denominator = 1 + z * z / total
-    centre = (p + z * z / (2 * total)) / denominator
-    margin = z / denominator * math.sqrt(p * (1 - p) / total + z * z / (4 * total * total))
-    return [round(max(0.0, centre - margin), 4), round(min(1.0, centre + margin), 4)]
 
 
 # --------------------------------------------------------------------------- #

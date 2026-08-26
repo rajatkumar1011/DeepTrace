@@ -68,6 +68,34 @@ def _seconds_label(seconds) -> str:
     return f"{int(minutes):02d}:{secs:05.2f}"
 
 
+def _fusable(module: dict | None, score_key: str) -> bool:
+    """Whether a module's score may be given a weight.
+
+    Three conditions, and the third is the one that matters. A module that
+    completed and produced a number may still have established that its own
+    measurement does not apply to this media — a speaker score from a
+    half-second clip, an alignment figure from B-roll. It says so by setting
+    ``excluded_from_risk``, and that judgement belongs to the module that made
+    the measurement, not to the fusion that consumes it. Honouring the flag here
+    is what makes it a contract rather than a comment: without this check the
+    flag was set in three places and read in none.
+    """
+    if not module or module.get("status") != "completed":
+        return False
+    if module.get(score_key) is None:
+        return False
+    return not module.get("excluded_from_risk")
+
+
+def _exclusion_reason(module: dict | None, default: str, fallback_key: str = "reason") -> str:
+    """Why a module contributed nothing, preferring the module's own words."""
+    module = module or {}
+    return (module.get("exclusion_reason")
+            or module.get("reason")
+            or module.get(fallback_key)
+            or default)
+
+
 def fuse(*, deepfake: dict | None = None, identity: dict | None = None,
          voice: dict | None = None, consistency: dict | None = None,
          audio: dict | None = None, propagation: dict | None = None,
@@ -149,7 +177,7 @@ def fuse(*, deepfake: dict | None = None, identity: dict | None = None,
         })
 
     # ── Voice match ──────────────────────────────────────────────────────────
-    if voice and voice.get("status") == "completed" and voice.get("voice_match_score") is not None:
+    if _fusable(voice, "voice_match_score"):
         value = float(voice["voice_match_score"])
         normalized = _threshold_normalise(max(0.0, value), VOICE_THRESHOLD)
         signals.append({
@@ -170,12 +198,11 @@ def fuse(*, deepfake: dict | None = None, identity: dict | None = None,
         excluded.append({
             "key": "voice",
             "label": "Voice match",
-            "reason": (voice or {}).get("reason") or "Speaker comparison was not performed.",
+            "reason": _exclusion_reason(voice, "Speaker comparison was not performed."),
         })
 
     # ── A/V consistency ──────────────────────────────────────────────────────
-    if consistency and consistency.get("status") == "completed" \
-            and consistency.get("consistency_score") is not None:
+    if _fusable(consistency, "consistency_score"):
         alignment = float(consistency["consistency_score"])
         normalized = 1.0 - alignment
         duration = consistency.get("duration_agreement") or {}
@@ -203,8 +230,8 @@ def fuse(*, deepfake: dict | None = None, identity: dict | None = None,
         excluded.append({
             "key": "av_consistency",
             "label": "Audio/video consistency",
-            "reason": (consistency or {}).get("details")
-                      or "Audio/video alignment could not be measured.",
+            "reason": _exclusion_reason(
+                consistency, "Audio/video alignment could not be measured.", fallback_key="details"),
         })
 
     # ── Provenance ───────────────────────────────────────────────────────────

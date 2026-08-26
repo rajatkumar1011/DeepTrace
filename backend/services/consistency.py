@@ -9,6 +9,17 @@ Two independent signals:
 
 This is a lightweight heuristic, not SyncNet or a deep multimodal verifier, and
 it is labelled as such everywhere the result surfaces.
+
+**Where alignment means something.** Face presence and audio energy are only
+expected to track each other in footage of a person speaking to camera. In a
+voice-over, a reaction shot, an establishing shot or any B-roll, they diverge for
+entirely legitimate reasons — so a low alignment score on that footage is a fact
+about the edit, not a sign of manipulation. Risk fusion reads low alignment as
+raised risk, which is defensible for a talking-head clip and wrong for anything
+else. Rather than leave that contradiction between what this module says and what
+the fusion does, the module decides for itself whether its own measurement
+applies to the media in hand, and withdraws from fusion when it does not. The
+number is still reported either way; only its weight is withheld.
 """
 
 import os
@@ -17,9 +28,19 @@ import cv2
 import numpy as np
 
 from services.forensics import load_audio_samples
+from services.statistics import wilson_interval
 
 _METHOD = "Face presence vs audio RMS windows + stream duration agreement"
 _MODEL_STATUS = "Lightweight heuristic (not SyncNet or deep lip-sync verification)"
+
+# A face in fewer than half the sampled frames means the clip is not
+# predominantly footage of a person to camera, which is the only setting in which
+# face-versus-audio agreement carries information about the media's integrity.
+TALKING_HEAD_FACE_RATIO = 0.5
+
+# Below this many readable frames the proportion is too coarse to act on: with
+# four samples, a single detection failure moves alignment by 25 points.
+MIN_SAMPLES_FOR_FUSION = 6
 
 
 def _unavailable(reason: str, audio_present: bool | None = None) -> dict:
@@ -144,27 +165,63 @@ def check_av_consistency(video_path: str, frame_items: list | None = None,
 
     duration_check = _duration_agreement(probe_summary)
 
+    # Whether this measurement applies to this media, decided from the media
+    # itself rather than assumed. Both conditions are about interpretability, not
+    # about whether the measurement succeeded — it did.
+    enough_samples = len(timestamps) >= MIN_SAMPLES_FOR_FUSION
+    talking_head = face_ratio >= TALKING_HEAD_FACE_RATIO
+    applicable = enough_samples and talking_head
+
+    if not talking_head:
+        applicability_reason = (
+            f"A face was visible in only {face_ratio * 100:.0f}% of the {len(face_flags)} sampled "
+            "frames, so this clip is not predominantly footage of a person speaking to camera. "
+            "Face presence and audio energy are not expected to agree in a voice-over, a reaction "
+            "shot or B-roll, so the alignment figure below describes the edit rather than the "
+            "media's integrity and carries no weight in the risk score."
+        )
+    elif not enough_samples:
+        applicability_reason = (
+            f"Only {len(timestamps)} frame(s) could be read back for comparison, below the "
+            f"{MIN_SAMPLES_FOR_FUSION} DeepTrace requires before an alignment proportion is acted "
+            "on. The figure is reported; it carries no weight in the risk score."
+        )
+    else:
+        applicability_reason = None
+
+    alignment_interval = wilson_interval(aligned, len(timestamps))
+
     observations = [
         f"A face was detected in {sum(face_flags)} of {len(face_flags)} sampled frames "
         f"({face_ratio * 100:.0f}%).",
         f"Face presence and audio activity agreed at {aligned} of {len(timestamps)} sampled "
         f"timestamps ({alignment * 100:.0f}%).",
     ]
+    if alignment_interval:
+        observations.append(
+            f"With {len(timestamps)} samples the 95% interval on that proportion runs "
+            f"{alignment_interval[0] * 100:.0f}%–{alignment_interval[1] * 100:.0f}%, which is the "
+            "precision this many frames supports."
+        )
     if mismatches:
         observations.append(
             f"{len(mismatches)} timestamp(s) disagreed — see the mismatch list for the specific times."
         )
     if duration_check.get("observation"):
         observations.append(duration_check["observation"])
+    if applicability_reason:
+        observations.append(applicability_reason)
 
     return {
         "status": "completed",
         "consistency_score": round(alignment, 4),
+        "consistency_score_95_ci": alignment_interval,
         "audio_present": True,
         "face_present_ratio": round(face_ratio, 4),
         "energy_alignment_score": round(alignment, 4),
         "energy_threshold": round(energy_threshold, 5),
         "samples_compared": len(timestamps),
+        "samples_agreed": aligned,
         "faces_detected_total": int(sum(face_counts)),
         "mismatch_count": len(mismatches),
         "mismatches": mismatches[:10],
@@ -172,13 +229,26 @@ def check_av_consistency(video_path: str, frame_items: list | None = None,
         "observations": observations,
         "method": _METHOD,
         "model_status": _MODEL_STATUS,
+        "alignment_applicable": applicable,
+        "applicability_basis": {
+            "talking_head_face_ratio": TALKING_HEAD_FACE_RATIO,
+            "minimum_samples": MIN_SAMPLES_FOR_FUSION,
+            "face_ratio_observed": round(face_ratio, 4),
+            "samples_observed": len(timestamps),
+            "rationale": (
+                "Face-versus-audio agreement only carries information about integrity for footage "
+                "of a person speaking to camera, and only over enough samples for the proportion "
+                "to be stable. Both are checked against this media before the figure is fused."
+            ),
+        },
         "details": (
             "Alignment is the share of sampled timestamps where face presence and audio energy "
             "agree. Low alignment is expected for legitimate media such as voice-overs, "
             "reaction shots and B-roll, so it is a supporting signal only."
         ),
         "warning": "This is a supporting forensic signal, not proof of manipulation.",
-        "excluded_from_risk": False,
+        "excluded_from_risk": not applicable,
+        "exclusion_reason": applicability_reason,
     }
 
 
