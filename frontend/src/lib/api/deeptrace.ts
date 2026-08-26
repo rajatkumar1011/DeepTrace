@@ -1,6 +1,7 @@
 import { API_PATHS } from "@/config/constants";
 import type {
   BenchmarkPayload,
+  CaseSubmitterReceipt,
   ConsentText,
   CustodyRecord,
   DashboardStats,
@@ -56,13 +57,32 @@ export async function getInvestigations() {
   return (await api.get<InvestigationItem[]>(API_PATHS.investigations)).data;
 }
 
+/** Record self-declared submitter details before an investigation is opened. */
+export async function createCaseSubmitter(input: {
+  fullName: string;
+  aadhaarNumber: string;
+  gender: string;
+  dateOfBirth: string;
+  phoneNumber: string;
+}) {
+  const form = new FormData();
+  form.append("full_name", input.fullName.trim());
+  form.append("aadhaar_number", input.aadhaarNumber.replace(/\D/g, ""));
+  form.append("gender", input.gender);
+  form.append("date_of_birth", input.dateOfBirth);
+  form.append("phone_number", input.phoneNumber.replace(/\D/g, ""));
+  return (await api.post<CaseSubmitterReceipt>(API_PATHS.submitter, form)).data;
+}
+
 export async function createInvestigation(input: {
   file: File;
+  submitterId: number;
   identityId?: number | null;
   sourceUrls?: string;
 }) {
   const form = new FormData();
   form.append("file", input.file);
+  form.append("submitter_id", String(input.submitterId));
   if (input.identityId) form.append("identity_id", String(input.identityId));
   if (input.sourceUrls?.trim()) form.append("source_urls", input.sourceUrls.trim());
   return (

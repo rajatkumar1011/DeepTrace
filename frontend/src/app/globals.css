@@ -185,8 +185,8 @@ html.a11y-contrast .side-copy, html.a11y-contrast .panel-note, html.a11y-contras
 .flow-heading { max-width: 760px; }
 .flow-heading h1 { font-size: 40px; }
 .flow-heading p, .page-title-row p { color: var(--muted); margin: 0; }
-.stepper { display: grid; grid-template-columns: repeat(3, 1fr); list-style: none; padding: 0; margin: 32px 0 24px; position: relative; }
-.stepper::before { content: ""; position: absolute; top: 18px; left: 16.6%; right: 16.6%; border-top: 2px solid #cad5e2; z-index: 0; }
+.stepper { display: grid; grid-template-columns: repeat(4, 1fr); list-style: none; padding: 0; margin: 32px 0 24px; position: relative; }
+.stepper::before { content: ""; position: absolute; top: 18px; left: 12.5%; right: 12.5%; border-top: 2px solid #cad5e2; z-index: 0; }
 .stepper li { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; color: #7a8798; font-weight: 700; }
 .stepper li > span { width: 36px; height: 36px; border-radius: 50%; background: #fff; border: 2px solid #cbd5e1; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
 .stepper li.active > span { border-color: var(--navy); background: var(--navy); color: #fff; }
@@ -199,6 +199,15 @@ html.a11y-contrast .side-copy, html.a11y-contrast .panel-note, html.a11y-contras
 .flow-card-heading h2 { margin: 2px 0 4px; color: #18345d; font-size: 24px; }
 .flow-card-heading p { color: var(--muted); margin: 0; font-size: 14px; }
 .choice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+.identification-notice { margin-bottom: 4px; display: flex; gap: 12px; align-items: flex-start; border: 1px solid #c9d8e8; background: #f5f9fd; border-radius: 7px; padding: 14px 16px; color: #24456f; }
+.identification-notice > svg { flex: 0 0 auto; margin-top: 2px; }
+.identification-notice strong { display: block; font-size: 13px; margin-bottom: 3px; }
+.identification-notice p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.identification-grid .form-field { margin-top: 0; }
+.phone-input-row { display: flex; align-items: stretch; }
+.phone-input-row > span { display: inline-flex; align-items: center; border: 1px solid #b9c5d4; border-right: 0; border-radius: 6px 0 0 6px; padding: 0 12px; background: #f5f7fa; color: #50647d; font-size: 13px; font-weight: 700; }
+.phone-input-row input { border-radius: 0 6px 6px 0 !important; }
 .choice-card { min-height: 118px; border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 16px; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
 .choice-card strong { color: #203854; }
 .choice-card span { color: var(--muted); font-size: 12px; }

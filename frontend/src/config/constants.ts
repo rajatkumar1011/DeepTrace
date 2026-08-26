@@ -12,6 +12,7 @@ export const API_PATHS = {
   health: "/api/health",
   stats: "/api/dashboard/stats",
   consentText: "/api/consent-text",
+  submitter: "/api/submitter",
   identities: "/api/identities",
   enrollIdentity: "/api/identity/enroll",
   investigate: "/api/investigate",

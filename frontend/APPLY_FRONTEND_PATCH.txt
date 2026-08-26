@@ -1,0 +1,84 @@
+DeepTrace frontend identification-step patch
+============================================
+
+This patch is built for the frontend source ZIP supplied on 2026-08-26.
+It expects the backend submitter patch to already be installed and the migration
+migrations/001_add_case_submitter.py to have been run.
+
+WHAT CHANGES
+------------
+The existing 3-step evidence wizard becomes 4 steps:
+
+1. Identification
+2. Reference identity
+3. Suspicious media
+4. Review & begin
+
+The Identification step requires:
+- Full name
+- 12-digit Aadhaar number
+- Gender
+- Date of birth
+- 10-digit Indian mobile number
+
+The screen explicitly states that these are self-declared identification details
+and are NOT independently verified by DeepTrace.
+
+The Aadhaar and phone are masked on the Review step.
+
+No OTP, no KYC, no Aadhaar authentication, and no report changes are included.
+
+FILES TO REPLACE
+----------------
+From this ZIP, replace these files in your frontend project:
+
+src/app/page.tsx
+src/app/globals.css
+src/config/constants.ts
+src/lib/api/deeptrace.ts
+src/types/index.ts
+
+BACKEND API EXPECTED
+--------------------
+POST /api/submitter
+  full_name
+  aadhaar_number
+  gender
+  date_of_birth
+  phone_number
+
+The returned `id` is then sent to:
+
+POST /api/investigate
+  submitter_id=<returned id>
+  file=...
+  identity_id=... (optional)
+  source_urls=... (optional)
+
+HOW THE SUBMITTER IS SAVED
+--------------------------
+The wizard validates the identification fields in Step 1, but it does NOT write
+to the database immediately. The submitter record is created only when the user
+clicks "Create case and begin analysis" on Step 4. This avoids creating orphan
+submitter rows when somebody abandons the wizard halfway through.
+
+TEST
+----
+From frontend:
+
+npm run dev
+
+Then open Start evidence collection and confirm:
+
+1. You cannot continue past Identification with missing/invalid fields.
+2. Step 2 is the old Reference identity screen.
+3. Step 3 is the old Suspicious media screen.
+4. Step 4 shows masked Aadhaar/phone and the existing case review.
+5. Creating the case succeeds instead of returning the submitter_id 422 error.
+
+Validation performed while preparing this patch:
+- TypeScript: `tsc --noEmit` -> passed
+- ESLint on TS/TSX changed files -> no errors
+- Full Next build could not complete in the isolated environment because Next.js
+  attempted to download a platform SWC package from npm and network access was
+  unavailable. This is not a TypeScript error in the patch.
