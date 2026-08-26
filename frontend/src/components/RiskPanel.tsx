@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { FaExclamationTriangle as AlertTriangle, FaCheckCircle as CheckCircle2, FaInfoCircle as Info } from "react-icons/fa";
 import { RISK_COPY } from "@/config/constants";
 import { formatPercent } from "@/lib/format";
 

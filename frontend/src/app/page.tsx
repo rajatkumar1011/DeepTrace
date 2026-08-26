@@ -1,33 +1,34 @@
 "use client";
 
 import {
-  AlertCircle,
-  ArrowRight,
-  Check,
-  CheckCircle2,
-  ChevronLeft,
-  CircleHelp,
-  ClipboardCheck,
-  Clock3,
-  Copy,
-  Download,
-  ExternalLink,
-  FileCheck2,
-  FileImage,
-  FileSearch,
-  Fingerprint,
-  FolderLock,
-  HeartHandshake,
-  Info,
-  LoaderCircle,
-  LockKeyhole,
-  RefreshCw,
-  SearchCheck,
-  ShieldCheck,
-  Upload,
-  UserRoundCheck,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+  FaExclamationCircle as AlertCircle,
+  FaArrowRight as ArrowRight,
+  FaCheck as Check,
+  FaCheckCircle as CheckCircle2,
+  FaChevronLeft as ChevronLeft,
+  FaQuestionCircle as CircleHelp,
+  FaClipboardCheck as ClipboardCheck,
+  FaClock as Clock3,
+  FaCopy as Copy,
+  FaDownload as Download,
+  FaExternalLinkAlt as ExternalLink,
+  FaFileAlt as FileCheck2,
+  FaImage as FileImage,
+  FaSearch as FileSearch,
+  FaFingerprint as Fingerprint,
+  FaFolder as FolderLock,
+  FaHandsHelping as HeartHandshake,
+  FaInfoCircle as Info,
+  FaSpinner as LoaderCircle,
+  FaLock as LockKeyhole,
+  FaSyncAlt as RefreshCw,
+  FaSearch as SearchCheck,
+  FaShieldAlt as ShieldCheck,
+  FaUpload as Upload,
+  FaUserCheck as UserRoundCheck,
+  FaCircle as SeparatorDot,
+} from "react-icons/fa";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { AnalysisProgress } from "@/components/AnalysisProgress";
 import { AudioPanel } from "@/components/AudioPanel";
 import { EmptyState } from "@/components/EmptyState";
@@ -491,7 +492,7 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
             <ReviewRow label="Suspicious media" value={suspiciousFile?.name || "—"} />
             <ReviewRow label="File size" value={formatBytes(suspiciousFile?.size)} />
             <ReviewRow label="Source noted" value={sourceUrls.trim() ? `${sourceUrls.trim().split(/\s+/).length} URL(s)` : "None"} />
-            <ReviewRow label="What happens next" value="Integrity hash → forensic analysis → evidence package → report" />
+            <ReviewRow label="What happens next" value={<span className="review-flow"><span>Integrity hash</span><ArrowRight size={13} aria-hidden="true" /><span>forensic analysis</span><ArrowRight size={13} aria-hidden="true" /><span>evidence package</span><ArrowRight size={13} aria-hidden="true" /><span>report</span></span>} />
           </div>
           <div className="consent-note"><LockKeyhole size={19} /><div><strong>Your evidence is treated separately from the AI result.</strong><p>A model score does not overwrite the preserved original. DeepTrace keeps the evidence integrity hash and analytical findings as distinct records.</p></div></div>
           <div className="flow-actions"><button className="btn btn-ghost" onClick={() => setStep(2)} disabled={busy}><ChevronLeft size={17} /> Back</button><button className="btn btn-primary btn-lg" onClick={submit} disabled={busy}>{busy ? <><LoaderCircle className="spin" size={18} /> Creating your case…</> : <>Create case and begin analysis <ArrowRight size={18} /></>}</button></div>
@@ -517,7 +518,7 @@ function FileField({ label, hint, accept, file, onChange }: { label: string; hin
   );
 }
 
-function ReviewRow({ label, value }: { label: string; value: string }) {
+function ReviewRow({ label, value }: { label: string; value: ReactNode }) {
   return <div className="review-row"><span>{label}</span><strong>{value}</strong></div>;
 }
 
@@ -631,10 +632,10 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
           <span className="eyebrow">Case #{investigation.id}</span>
           <h1>{investigation.filename}</h1>
           <div className="case-meta-line">
-            <span className="media-kind">{investigation.media_type}</span><span>•</span>
-            <span>{formatBytes(investigation.file_size_bytes)}</span><span>•</span>
+            <span className="media-kind">{investigation.media_type}</span><SeparatorDot className="meta-separator" size={5} aria-hidden="true" />
+            <span>{formatBytes(investigation.file_size_bytes)}</span><SeparatorDot className="meta-separator" size={5} aria-hidden="true" />
             <span>{formatDate(investigation.created_at)}</span>
-            {investigation.identity_name && <><span>•</span><span>vs {investigation.identity_name}</span></>}
+            {investigation.identity_name && <><SeparatorDot className="meta-separator" size={5} aria-hidden="true" /><span>vs {investigation.identity_name}</span></>}
           </div>
         </div>
         <StatusPill status={investigation.status} />
@@ -738,7 +739,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
         </div>
 
         <aside className="case-side-column">
-          <section className="content-card sticky-card">
+          <section className="content-card">
             <div className="side-heading"><Fingerprint size={20} /><div><span>Evidence integrity</span><h2>Original file hash</h2></div></div>
             <p className="side-copy">This SHA-256 value fingerprints the exact file received by DeepTrace. It was computed server-side as the upload was written to disk.</p>
             <code className="hash-box">{investigation.sha256_hash}</code>

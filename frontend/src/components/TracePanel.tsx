@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, GitCompareArrows, Link2, LoaderCircle, Upload } from "lucide-react";
+import { FaExclamationTriangle as AlertTriangle, FaExchangeAlt as GitCompareArrows, FaLink as Link2, FaSpinner as LoaderCircle, FaUpload as Upload } from "react-icons/fa";
 import { useState } from "react";
 import { ACCEPTED_MEDIA } from "@/config/constants";
 import { getApiError } from "@/lib/api/client";

@@ -1,6 +1,6 @@
 "use client";
 
-import { Accessibility, ExternalLink, Menu, ShieldCheck, X } from "lucide-react";
+import { FaUniversalAccess as Accessibility, FaExternalLinkAlt as ExternalLink, FaBars as Menu, FaShieldAlt as ShieldCheck, FaTimes as X, FaCircle as SeparatorDot } from "react-icons/fa";
 import { useState } from "react";
 import { APP, EXTERNAL_LINKS, NAV_ITEMS } from "@/config/constants";
 import type { ViewKey } from "@/types";
@@ -14,7 +14,7 @@ export function Header({ current, onNavigate }: { current: ViewKey; onNavigate: 
       <div className="official-note">
         <div className="page-shell official-note-inner">
           <span>भारत सरकार शैली से प्रेरित नागरिक सहायता इंटरफ़ेस</span>
-          <span className="official-note-dot">•</span>
+          <span className="official-note-dot" aria-hidden="true"><SeparatorDot size={5} /></span>
           <span>{APP.prototypeNotice}</span>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { AudioLines, Waves } from "lucide-react";
+import { FaWaveSquare as AudioLines, FaWaveSquare as Waves } from "react-icons/fa";
 import { API_BASE_URL } from "@/config/constants";
 import { clock, dataOf, nested, num, rows, str, strings } from "@/lib/modules";
 import type { InvestigationDetail } from "@/types";

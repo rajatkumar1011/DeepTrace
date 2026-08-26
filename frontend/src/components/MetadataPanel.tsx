@@ -1,4 +1,4 @@
-import { BadgeCheck, FileCode2, ShieldQuestion } from "lucide-react";
+import { FaCertificate as BadgeCheck, FaFileCode as FileCode2, FaQuestionCircle as ShieldQuestion } from "react-icons/fa";
 import { dataOf, nested, num, str } from "@/lib/modules";
 import { formatBytes } from "@/lib/format";
 import type { InvestigationDetail } from "@/types";

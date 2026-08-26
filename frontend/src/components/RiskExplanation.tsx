@@ -1,4 +1,4 @@
-import { Scale } from "lucide-react";
+import { FaBalanceScale as Scale } from "react-icons/fa";
 import { dataOf, nested, num, rows, str } from "@/lib/modules";
 import type { InvestigationDetail } from "@/types";
 
