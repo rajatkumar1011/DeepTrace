@@ -21,6 +21,7 @@ export const API_PATHS = {
   timeline: (id: number) => `/api/investigation/${id}/timeline`,
   evidence: (id: number) => `/api/investigation/${id}/evidence`,
   verify: (id: number) => `/api/investigation/${id}/verify`,
+  custody: (id: number) => `/api/investigation/${id}/custody`,
   trace: (id: number) => `/api/investigation/${id}/trace`,
   guidance: (id: number) => `/api/investigation/${id}/response-guidance`,
   report: (id: number) => `/api/investigation/${id}/report`,
@@ -124,3 +125,44 @@ export const INTEGRITY_COPY: Record<string, { label: string; tone: "ok" | "warn"
   missing: { label: "File missing", tone: "warn" },
   no_recorded_hash: { label: "No recorded hash", tone: "muted" },
 };
+
+/**
+ * Who DeepTrace is for, stated rather than implied.
+ *
+ * The interface is written for the person the impersonation happened to, because
+ * they are the one under pressure and the one who has to decide what to do next.
+ * The exported report is written for the officer who receives it. Naming both,
+ * and saying which surface belongs to which, stops a reader assuming a screen
+ * was meant for someone else.
+ */
+export const PRIMARY_USER = {
+  primary: {
+    role: "The person being impersonated",
+    also: "the complainant",
+    statement:
+      "DeepTrace is built first for the person whose face or voice was misused. Every screen here is written for you, in plain language, with no forensic vocabulary you have to learn first.",
+  },
+  secondary: {
+    role: "The cybercrime investigator or forensic examiner",
+    also: "who receives your report",
+    statement:
+      "The case view and the exported PDF are written for the officer handling your complaint: full digests, per-module findings, the chain of custody, the methods used and the limits of each one — in the order an investigator needs them.",
+  },
+  readsWhat: [
+    {
+      who: "You, the person affected",
+      reads: "The plain-language findings, the risk explanation and the next-steps page.",
+      why: "So you can understand what was found and decide whether to report it, without needing a forensics background.",
+    },
+    {
+      who: "The investigating officer",
+      reads: "The exported PDF — 22 sections covering the evidence register with full hash values, the chain of custody, every module's method and its stated limitations.",
+      why: "So the case can be assessed and taken forward on the record, not on a screenshot of a score.",
+    },
+    {
+      who: "Neither of you",
+      reads: "A verdict. DeepTrace does not decide whether media is genuine or fake.",
+      why: "That determination belongs to a qualified examiner and, ultimately, to a court.",
+    },
+  ],
+} as const;

@@ -121,6 +121,75 @@ export interface IntegrityReport {
   limitations: string;
 }
 
+/** One statement from the custody boundary lists, with the basis for it. */
+export interface CustodyClaim {
+  claim: string;
+  detail: string;
+}
+
+export interface CustodyGap {
+  gap: string;
+  detail: string;
+}
+
+export interface CustodyLedgerEntry {
+  evidence_id: number;
+  evidence_type: string | null;
+  origin: "acquired" | "derived" | string;
+  role: string;
+  role_detail: string;
+  preserved_at: string | null;
+  timestamp_offset: number | null;
+  sha256: string | null;
+  digest_recorded: boolean;
+}
+
+export interface CustodyRecord {
+  investigation_id: number;
+  custody_scope: {
+    definition: string;
+    deeptrace_supplies: string[];
+    investigator_supplies: string[];
+    statement: string;
+  };
+  acquisition: {
+    case_reference: string;
+    submitted_filename: string | null;
+    media_type: string | null;
+    file_size_bytes: number | null;
+    received_at: string | null;
+    algorithm: string;
+    sha256: string | null;
+    perceptual_hash: string | null;
+    hash_binding: string;
+    derived_hash_binding: string;
+    type_determination: string;
+    filename_note: string;
+    clock_source: string;
+  };
+  derivation_note: string;
+  artifact_ledger: CustodyLedgerEntry[];
+  counts: { artifacts: number; acquired: number; derived: number; without_digest: number };
+  chronology: { sequence: number; event_type: string; description: string; recorded_at: string | null }[];
+  chronology_note: string;
+  integrity_check: {
+    verified_at: string | null;
+    algorithm: string | null;
+    artifacts_checked: number | null;
+    chain_intact: boolean | null;
+    summary: string | null;
+    counts: IntegrityReport["counts"] | null;
+    method: string | null;
+    limitations: string | null;
+  };
+  hashing_proves: CustodyClaim[];
+  hashing_does_not_prove: CustodyClaim[];
+  ai_establishes: CustodyClaim[];
+  ai_does_not_establish: CustodyClaim[];
+  custody_gaps: CustodyGap[];
+  boundary_summary: string;
+}
+
 export interface GuidanceAction {
   step: number;
   action: string;

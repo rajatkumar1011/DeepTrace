@@ -1,6 +1,6 @@
 """Forensic incident report generation.
 
-Twenty sections, every value read from what the pipeline actually recorded. A
+Twenty-two sections, every value read from what the pipeline actually recorded. A
 module that did not run is printed as not-run, with the reason it gave — no
 section is filled with a plausible-looking placeholder, and the limitations
 section is assembled from the observed module statuses rather than a fixed list.
@@ -93,6 +93,7 @@ def on_disk(path: str | None) -> str | None:
 
 def generate_report(investigation_id: int, db_session) -> str | None:
     from models.schema import Identity, Investigation
+    from services.custody import build_custody_record
     from services.integrity import verify_investigation
     from services.response import build_guidance
 
@@ -137,6 +138,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         }
         for item in evidence_items
     ])
+    custody = build_custody_record(inv, integrity, identity)
     trace_sources = [
         {
             "source_url": source.source_url,
@@ -226,6 +228,13 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ]))
         story.append(table)
+
+    def claims_table(entries: list[dict], first_column: str) -> None:
+        """Render one of the custody claim lists as a statement/basis table."""
+        grid([first_column, "Basis for that statement"],
+             [[Paragraph(f"<b>{escape(entry['claim'])}</b>", small), entry["detail"]]
+              for entry in entries],
+             [62 * mm, CONTENT_WIDTH - 62 * mm])
 
     def not_run(payload: dict | None, module_label: str) -> bool:
         """Print an honest not-run block. Returns True when the section is closed."""
@@ -399,7 +408,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         ("Algorithm", integrity["algorithm"]),
         ("Artifacts checked", integrity["artifacts_checked"]),
         ("Result", integrity["summary"]),
-        ("Chain intact", integrity["chain_intact"]),
+        ("All digests re-verified", integrity["chain_intact"]),
         ("Method", integrity["method"]),
     ])
     problems = [item for item in integrity["artifacts"] if item["status"] != "verified"]
@@ -412,6 +421,104 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     para(integrity["limitations"], small)
 
     # 7 ─────────────────────────────────────────────────────────────────────
+    section("Chain of Custody")
+    scope = custody["custody_scope"]
+    para(scope["definition"])
+    para(scope["statement"])
+    mine, theirs = scope["deeptrace_supplies"], scope["investigator_supplies"]
+    grid(["What DeepTrace records", "What the investigating officer must supply"],
+         [[mine[i] if i < len(mine) else "", theirs[i] if i < len(theirs) else ""]
+          for i in range(max(len(mine), len(theirs)))],
+         [CONTENT_WIDTH / 2, CONTENT_WIDTH / 2])
+    story.append(Spacer(1, 2 * mm))
+    para("The remainder of this section is the file half of that chain, as recorded by "
+         "DeepTrace for this case.", small)
+
+    story.append(Paragraph("Acquisition", subheading))
+    acquisition = custody["acquisition"]
+    counts = custody["counts"]
+    keyvalues([
+        ("Case reference", acquisition["case_reference"]),
+        ("Item acquired", acquisition["submitted_filename"]),
+        ("Acquired at", acquisition["received_at"]),
+        ("Size at acquisition", f"{acquisition['file_size_bytes']} bytes"
+                               if acquisition["file_size_bytes"] is not None else "Not recorded"),
+        ("Acquisition digest", f"{acquisition['algorithm']}: {acquisition['sha256']}"),
+        ("How the digest was bound", acquisition["hash_binding"]),
+        ("Digests of derived files", acquisition["derived_hash_binding"]),
+        ("How media type was decided", acquisition["type_determination"]),
+        ("Stored filename", acquisition["filename_note"]),
+        ("Time source", acquisition["clock_source"]),
+        ("Artifacts in the chain", f"{counts['artifacts']} total — {counts['acquired']} acquired, "
+                                   f"{counts['derived']} derived, "
+                                   f"{counts['without_digest']} without a recorded digest"),
+    ])
+
+    story.append(Paragraph("Artifact lineage", subheading))
+    if custody["artifact_ledger"]:
+        grid(["ID", "Type", "Role in the chain", "Preserved at", "Digest"],
+             [[entry["evidence_id"],
+               (entry["evidence_type"] or "").replace("_", " "),
+               entry["role"],
+               entry["preserved_at"] or "Not recorded",
+               "Recorded" if entry["digest_recorded"] else "Not recorded"]
+              for entry in custody["artifact_ledger"]],
+             [10 * mm, 24 * mm, 42 * mm, 40 * mm, CONTENT_WIDTH - 116 * mm])
+        story.append(Spacer(1, 1.5 * mm))
+        seen: set[str] = set()
+        for entry in custody["artifact_ledger"]:
+            key = entry["evidence_type"] or ""
+            if key in seen:
+                continue
+            seen.add(key)
+            para(f"{key.replace('_', ' ') or 'artifact'} — {entry['role_detail']}", small)
+    else:
+        para("No artifacts are recorded for this case, so no chain can be described.", small)
+    para(custody["derivation_note"], small)
+
+    story.append(Paragraph("Recorded chronology", subheading))
+    chronology = custody["chronology"]
+    if chronology:
+        keyvalues([
+            ("Events recorded", len(chronology)),
+            ("First recorded event", f"{chronology[0]['recorded_at']} — {chronology[0]['description']}"),
+            ("Most recent event", f"{chronology[-1]['recorded_at']} — {chronology[-1]['description']}"),
+        ])
+        para("The complete event sequence is listed in the Investigation Timeline section of "
+             "this report.", small)
+    else:
+        para("No case events are recorded.", small)
+    para(custody["chronology_note"], small)
+
+    story.append(Paragraph("Where this custody record stops", subheading))
+    grid(["Limitation", "What it means for this case"],
+         [[Paragraph(f"<b>{escape(gap['gap'])}</b>", small), gap["detail"]]
+          for gap in custody["custody_gaps"]],
+         [62 * mm, CONTENT_WIDTH - 62 * mm])
+
+    # 8 ─────────────────────────────────────────────────────────────────────
+    section("What the Hash Proves and What the AI Analysis Establishes")
+    para(custody["boundary_summary"])
+    para("These are two different claims resting on two different kinds of evidence. Hashing is "
+         "arithmetic over bytes and is either right or wrong. Model output is a statistical "
+         "estimate with an error rate. Conflating them is the most common way a forensic "
+         "conclusion is overstated, so they are separated here explicitly.", small)
+
+    story.append(Paragraph(f"What {custody['acquisition']['algorithm']} hashing proves",
+                           subheading))
+    claims_table(custody["hashing_proves"], "Established by the digest")
+
+    story.append(Paragraph(f"What {custody['acquisition']['algorithm']} hashing does not prove",
+                           subheading))
+    claims_table(custody["hashing_does_not_prove"], "Not established by the digest")
+
+    story.append(Paragraph("What the AI analysis establishes", subheading))
+    claims_table(custody["ai_establishes"], "Established by the analysis")
+
+    story.append(Paragraph("What the AI analysis does not establish", subheading))
+    claims_table(custody["ai_does_not_establish"], "Not established by the analysis")
+
+    # 9 ─────────────────────────────────────────────────────────────────────
     section("Media Metadata and Technical Attributes")
     if metadata and metadata.get("status") == "completed":
         file_info = metadata.get("file") or {}
@@ -449,7 +556,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     else:
         not_run(metadata, "Metadata extraction")
 
-    # 8 ─────────────────────────────────────────────────────────────────────
+    # 10 ────────────────────────────────────────────────────────────────────
     section("Content Provenance (C2PA Content Credentials)")
     if provenance:
         keyvalues([
@@ -476,7 +583,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     else:
         not_run(provenance, "Provenance inspection")
 
-    # 9 ─────────────────────────────────────────────────────────────────────
+    # 11 ────────────────────────────────────────────────────────────────────
     section("Manipulation Analysis")
     if not not_run(deepfake, "Manipulation analysis"):
         keyvalues([
@@ -510,7 +617,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         para(deepfake.get("disclaimer") or
              "This is a manipulation indicator, not a verdict.", small)
 
-    # 10 ────────────────────────────────────────────────────────────────────
+    # 12 ────────────────────────────────────────────────────────────────────
     section("Manipulation Localization")
     if not not_run(localization, "Localization"):
         keyvalues([
@@ -551,7 +658,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         if localization.get("interpretation"):
             para(localization["interpretation"], small)
 
-    # 11 ────────────────────────────────────────────────────────────────────
+    # 13 ────────────────────────────────────────────────────────────────────
     section("Identity Comparison (Face)")
     if not not_run(identity_result, "Face comparison"):
         keyvalues([
@@ -577,7 +684,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                  [34 * mm, 34 * mm, CONTENT_WIDTH - 68 * mm])
         para(identity_result.get("note") or "", small)
 
-    # 12 ────────────────────────────────────────────────────────────────────
+    # 14 ────────────────────────────────────────────────────────────────────
     section("Speaker Verification (Voice)")
     if not not_run(voice, "Speaker verification"):
         keyvalues([
@@ -594,7 +701,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         para(voice.get("interpretation"))
         para(voice.get("note") or "", small)
 
-    # 13 ────────────────────────────────────────────────────────────────────
+    # 15 ────────────────────────────────────────────────────────────────────
     section("Audio Forensics")
     if not not_run(audio, "Audio forensics"):
         levels = audio.get("levels") or {}
@@ -631,7 +738,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             para(f"• {note}", small)
         para(audio.get("interpretation") or "", small)
 
-    # 14 ────────────────────────────────────────────────────────────────────
+    # 16 ────────────────────────────────────────────────────────────────────
     section("Audio-Visual Consistency")
     if not not_run(consistency, "A/V consistency"):
         keyvalues([
@@ -652,7 +759,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             para(f"• {note}", small)
         para(consistency.get("interpretation") or consistency.get("details") or "", small)
 
-    # 15 ────────────────────────────────────────────────────────────────────
+    # 17 ────────────────────────────────────────────────────────────────────
     section("Copy Tracing — Local Evidence Index")
     if not not_run(propagation, "Local copy tracing"):
         keyvalues([
@@ -683,7 +790,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                  "listed individually.", small)
         para(propagation.get("interpretation") or "", small)
 
-    # 16 ────────────────────────────────────────────────────────────────────
+    # 18 ────────────────────────────────────────────────────────────────────
     section("Source Tracing")
     if trace_sources:
         grid(["Source", "Origin", "Retrieval", "Relationship to original", "SHA-256 of copy"],
@@ -704,7 +811,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
          "authenticated API, bypasses no authentication, and circumvents no access control. Absence "
          "of a traced source says nothing about whether the media was distributed.", small)
 
-    # 17 ────────────────────────────────────────────────────────────────────
+    # 19 ────────────────────────────────────────────────────────────────────
     section("Explainable Risk Assessment")
     if risk:
         keyvalues([
@@ -741,7 +848,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     else:
         not_run(risk, "Risk fusion")
 
-    # 18 ────────────────────────────────────────────────────────────────────
+    # 20 ────────────────────────────────────────────────────────────────────
     story.append(PageBreak())
     section("Investigation Timeline")
     events = sorted(inv.timeline_events, key=lambda e: (str(e.created_at or ""), e.id))
@@ -755,7 +862,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     else:
         para("No timeline events are recorded for this investigation.", small)
 
-    # 19 ────────────────────────────────────────────────────────────────────
+    # 21 ────────────────────────────────────────────────────────────────────
     section("Recommended Response and Reporting Routes")
     keyvalues([
         ("Response priority", guidance.get("priority")),
@@ -776,7 +883,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
          [40 * mm, CONTENT_WIDTH - 76 * mm, 36 * mm])
     para(guidance.get("deeptrace_boundary") or "", small)
 
-    # 20 ────────────────────────────────────────────────────────────────────
+    # 22 ────────────────────────────────────────────────────────────────────
     section("Methodology, Models, Limitations and Notice")
     story.append(Paragraph("Models and methods actually used in this case", subheading))
     model_rows = [

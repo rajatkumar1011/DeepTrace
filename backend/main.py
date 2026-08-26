@@ -1396,6 +1396,34 @@ def verify_evidence(investigation_id: int, db: Session = Depends(get_db)):
     return payload
 
 
+@app.get("/api/investigation/{investigation_id}/custody")
+def get_custody_record(investigation_id: int, db: Session = Depends(get_db)):
+    """The chain-of-custody record, plus the hash-versus-analysis boundary.
+
+    Deliberately does not write a timeline event: this is a rendering of the
+    record, and logging every read would pollute the chronology it displays.
+    """
+    from services.custody import build_custody_record
+    from services.integrity import verify_investigation
+
+    inv = get_investigation_or_404(db, investigation_id)
+    integrity = verify_investigation([
+        {
+            "id": item.id,
+            "evidence_type": item.evidence_type,
+            "file_path": item.file_path,
+            "sha256_hash": item.sha256_hash,
+            "public_path": to_public_path(item.file_path),
+            "timestamp_offset": item.timestamp_offset,
+            "created_at": str(item.created_at) if item.created_at else None,
+        }
+        for item in inv.evidence_items
+    ])
+    identity = (db.query(Identity).filter(Identity.id == inv.identity_id).first()
+                if inv.identity_id else None)
+    return build_custody_record(inv, integrity, identity)
+
+
 # ─── Public-source tracing ───────────────────────────────────────────────────
 
 @app.get("/api/investigation/{investigation_id}/trace")

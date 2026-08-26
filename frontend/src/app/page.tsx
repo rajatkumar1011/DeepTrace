@@ -33,6 +33,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnalysisProgress } from "@/components/AnalysisProgress";
 import { AudioPanel } from "@/components/AudioPanel";
 import { CameraCapture } from "@/components/CameraCapture";
+import { CustodyPanel } from "@/components/CustodyPanel";
 import { EmptyState } from "@/components/EmptyState";
 import { Footer } from "@/components/Footer";
 import { GuidancePanel } from "@/components/GuidancePanel";
@@ -53,6 +54,7 @@ import {
   EXTERNAL_LINKS,
   MODULE_LABELS,
   MODULE_STATUS_COPY,
+  PRIMARY_USER,
 } from "@/config/constants";
 import { getApiError } from "@/lib/api/client";
 import {
@@ -200,6 +202,43 @@ function HomeView({
               <li><Check size={16} /> You can download an incident-ready PDF report.</li>
             </ul>
           </aside>
+        </div>
+      </section>
+
+      <section className="page-shell section-block">
+        <div className="section-heading">
+          <span>Who this is for</span>
+          <h2>Built for the person it happened to. Written so an investigator can use it.</h2>
+        </div>
+
+        <div className="role-banner">
+          <div className="role-card is-primary">
+            <HeartHandshake size={26} />
+            <div>
+              <em>Primary user</em>
+              <strong>{PRIMARY_USER.primary.role} <span>({PRIMARY_USER.primary.also})</span></strong>
+              <p>{PRIMARY_USER.primary.statement}</p>
+            </div>
+          </div>
+          <div className="role-card is-secondary">
+            <UserRoundCheck size={26} />
+            <div>
+              <em>Secondary user</em>
+              <strong>{PRIMARY_USER.secondary.role} <span>({PRIMARY_USER.secondary.also})</span></strong>
+              <p>{PRIMARY_USER.secondary.statement}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="reads-what">
+          <div><span>Who</span><span>Reads</span><span>Why</span></div>
+          {PRIMARY_USER.readsWhat.map((row) => (
+            <div key={row.who}>
+              <strong>{row.who}</strong>
+              <span>{row.reads}</span>
+              <small>{row.why}</small>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -772,7 +811,12 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
           {tab === "frames" && <SuspiciousFramesPanel investigation={investigation} />}
           {tab === "audio" && <AudioPanel investigation={investigation} />}
           {tab === "technical" && <MetadataPanel investigation={investigation} />}
-          {tab === "evidence" && <IntegrityPanel investigationId={investigation.id} evidence={evidence} />}
+          {tab === "evidence" && (
+            <>
+              <CustodyPanel investigationId={investigation.id} />
+              <IntegrityPanel investigationId={investigation.id} evidence={evidence} />
+            </>
+          )}
           {tab === "tracing" && <TracePanel investigation={investigation} onChanged={load} />}
           {tab === "next" && <GuidancePanel investigationId={investigation.id} ready={completed} />}
         </div>
@@ -796,7 +840,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
             <div className="side-heading"><ClipboardCheck size={20} /><div><span>Next step</span><h2>Prepare to report</h2></div></div>
             <ol className="next-actions">
               <li><span>1</span><div><strong>Keep screenshots and source URLs</strong><p>Save the post/page URL, username, date/time and any threats or messages.</p></div></li>
-              <li><span>2</span><div><strong>Generate the DeepTrace report</strong><p>Twenty sections covering evidence hashes, per-module findings, the timeline and reporting routes.</p></div></li>
+              <li><span>2</span><div><strong>Generate the DeepTrace report</strong><p>Twenty-two sections covering the chain of custody, evidence hashes, per-module findings, the timeline and reporting routes.</p></div></li>
               <li><span>3</span><div><strong>File or support your official complaint</strong><p>Use the National Cyber Crime Reporting Portal or the appropriate police/cyber cell process.</p></div></li>
             </ol>
             <button className="btn btn-primary btn-full" onClick={buildReport} disabled={actionBusy || !completed}>{actionBusy ? <><LoaderCircle className="spin" size={17} /> Preparing…</> : <><Download size={17} /> {reportReady ? "Regenerate report" : "Generate evidence report"}</>}</button>
@@ -885,7 +929,7 @@ function HowItWorksView({ onStart }: { onStart: () => void }) {
       <div className="help-steps">
         <HelpStep icon={<FolderLock />} number="1" title="Preserve the media" body="DeepTrace saves the uploaded original and calculates a SHA-256 integrity hash server-side. For videos, sampled frames, the extracted audio track and manipulation overlays are preserved as separate artifacts, each with its own digest." />
         <HelpStep icon={<SearchCheck />} number="2" title="Run separate forensic checks" body="Manipulation detection, localization, face matching, speaker verification, audio forensics, audio-video consistency, provenance and local copy tracing are kept as separate signals rather than collapsing everything into one fake/real answer." />
-        <HelpStep icon={<ClipboardCheck />} number="3" title="Build an evidence package" body="The case combines file details, hashes, preserved artifacts, per-module findings, a weighted risk explanation and a chronological timeline into one twenty-section report." />
+        <HelpStep icon={<ClipboardCheck />} number="3" title="Build an evidence package" body="The case combines file details, hashes, preserved artifacts, the chain of custody, per-module findings, a weighted risk explanation and a chronological timeline into one twenty-two-section report." />
         <HelpStep icon={<ExternalLink />} number="4" title="Use the official reporting channel" body="DeepTrace is a pre-reporting support layer. Official complaints should still go through the National Cyber Crime Reporting Portal or the appropriate law-enforcement channel." />
       </div>
 

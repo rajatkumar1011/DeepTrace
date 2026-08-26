@@ -93,6 +93,13 @@ export function IntegrityPanel({ investigationId, evidence }: { investigationId:
         </button>
       </div>
 
+      <p className="panel-note">
+        This check answers one question: do the preserved files still match the digests recorded for
+        them? It says nothing about whether the content is genuine or manipulated — that is a
+        separate question, answered by the analysis modules with a probability rather than a
+        match. The Chain of custody panel above sets out the boundary in full.
+      </p>
+
       {error && <div className="form-alert"><AlertTriangle size={18} /><span>{error}</span></div>}
 
       {report && (
@@ -117,7 +124,9 @@ export function IntegrityPanel({ investigationId, evidence }: { investigationId:
                 return (
                   <div className="mini-table-row" key={artifact.evidence_id}>
                     <span>{artifact.label}</span>
-                    <span className={`verdict verdict-${copy.tone}`}>{copy.label}</span>
+                    <span className={`verdict verdict-${copy.tone}`} title={VERDICT_TOOLTIPS[artifact.status] || artifact.detail}>
+                      {copy.label}
+                    </span>
                     <span><code>{shortHash(artifact.recorded_sha256)}</code></span>
                     <span>{artifact.detail}</span>
                   </div>
@@ -132,6 +141,22 @@ export function IntegrityPanel({ investigationId, evidence }: { investigationId:
     </section>
   );
 }
+
+/**
+ * What each verdict actually licenses you to say. Kept as tooltips rather than
+ * body text because they are precise enough to be long, and a reader only needs
+ * them for the row they are looking at.
+ */
+const VERDICT_TOOLTIPS: Record<string, string> = {
+  verified:
+    "The file's current bytes hash to the digest recorded for it. This detects corruption, truncation, re-encoding and edits made to the file alone — it cannot detect a change made to both the file and its stored digest.",
+  mismatch:
+    "The file's current bytes do not hash to the recorded digest, so the file has changed since it was preserved. The mismatch is reported, never repaired.",
+  missing:
+    "The recorded file could not be read from disk, so nothing could be compared. This is reported as unverifiable, not as verified.",
+  no_recorded_hash:
+    "No digest was recorded when this artifact was preserved, so there is nothing to compare against. It stays in the register marked unverifiable.",
+};
 
 function describeEvidence(type: string) {
   const labels: Record<string, string> = {

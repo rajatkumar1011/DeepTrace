@@ -1,4 +1,4 @@
-import { Scale } from "lucide-react";
+import { FlaskConical, Scale } from "lucide-react";
 import { dataOf, nested, num, rows, str } from "@/lib/modules";
 import type { InvestigationDetail } from "@/types";
 
@@ -72,6 +72,18 @@ export function RiskExplanation({ investigation }: { investigation: Investigatio
           ))}
         </div>
       </details>
+
+      <div className="custody-callout" role="note">
+        <FlaskConical size={20} />
+        <p>
+          <strong>This number is analysis, not preserved fact.</strong> It is a statistical estimate
+          with an error rate, recomputed from the preserved original every time the pipeline runs —
+          and it can change if the models or weights change. The SHA-256 digests in the evidence
+          register are the opposite: arithmetic over bytes, fixed at the moment the file was
+          received, and never recalculated by analysis. A score prioritises what to examine; a
+          digest establishes which file was examined.
+        </p>
+      </div>
 
       <p className="panel-note">
         {str(data, "disclaimer") ||

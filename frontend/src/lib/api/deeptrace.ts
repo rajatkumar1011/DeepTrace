@@ -1,6 +1,7 @@
 import { API_PATHS } from "@/config/constants";
 import type {
   ConsentText,
+  CustodyRecord,
   DashboardStats,
   DemoAssets,
   EvidenceItem,
@@ -90,6 +91,15 @@ export async function getEvidence(id: number) {
 /** Re-hash every preserved artifact server-side and compare with the record. */
 export async function verifyEvidence(id: number) {
   return (await api.get<IntegrityReport>(API_PATHS.verify(id))).data;
+}
+
+/**
+ * The chain-of-custody record: acquisition, artifact lineage, chronology and the
+ * explicit boundary between what the hash proves and what the analysis
+ * establishes. A read-only view — unlike `verifyEvidence`, it appends no event.
+ */
+export async function getCustodyRecord(id: number) {
+  return (await api.get<CustodyRecord>(API_PATHS.custody(id))).data;
 }
 
 export async function getTrace(id: number) {

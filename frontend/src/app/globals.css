@@ -621,3 +621,61 @@ main { flex: 1; }
   .capture-modal { padding: 17px; }
   .capture-actions .btn { flex: 1 1 100%; }
 }
+
+/* ── Chain of custody, proof boundary and primary-user declaration ────────── */
+
+.custody-subhead { display: flex; align-items: center; gap: 7px; color: #1b355a; font-size: 14px; margin: 0 0 10px; }
+.custody-subhead svg { color: var(--blue); }
+
+.custody-scope { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.custody-scope-half { border: 1px solid var(--line); border-radius: 7px; padding: 13px 15px; background: #f7fbf8; }
+.custody-scope-half.muted { background: #fbf9f4; border-color: #e6ddc9; }
+.custody-scope-half strong { display: flex; align-items: center; gap: 6px; color: #23563a; font-size: 12px; margin-bottom: 7px; }
+.custody-scope-half.muted strong { color: #7a5a12; }
+.custody-scope-half ul { margin: 0; padding-left: 17px; display: grid; gap: 5px; }
+.custody-scope-half li { color: #4a5a6e; font-size: 11.5px; line-height: 1.5; }
+
+.custody-callout { display: flex; gap: 11px; align-items: flex-start; border: 1px solid #b9cfe4; background: #f2f7fc; border-radius: 7px; padding: 13px 15px; }
+.custody-callout svg { color: var(--navy); flex: 0 0 auto; margin-top: 1px; }
+.custody-callout p { margin: 0; color: #2f4a68; font-size: 12.5px; line-height: 1.6; }
+
+.custody-ledger .mini-table-head,
+.custody-ledger .mini-table-row { grid-template-columns: minmax(0, .4fr) minmax(0, 1.7fr) minmax(0, 1.1fr) minmax(0, 1fr); }
+
+.proof-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.proof-column { border: 1px solid var(--line); border-radius: 7px; padding: 13px 15px; }
+.proof-column.proof-ok { background: #f6fbf7; border-color: #c4e0cd; }
+.proof-column.proof-bad { background: #fdf7f6; border-color: #e8c9c5; }
+.proof-column > strong { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 9px; }
+.proof-column.proof-ok > strong { color: #1f5c39; }
+.proof-column.proof-bad > strong { color: #8c3a30; }
+.proof-column ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 9px; }
+.proof-column li { display: flex; flex-direction: column; gap: 2px; }
+.proof-column li span { color: #2b405a; font-size: 12px; font-weight: 700; line-height: 1.4; }
+.proof-column li small { color: #64748b; font-size: 11px; line-height: 1.5; }
+
+.role-banner { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 18px; margin-bottom: 22px; }
+.role-card { display: flex; gap: 11px; align-items: flex-start; }
+.role-card svg { flex: 0 0 auto; margin-top: 2px; }
+.role-card.is-primary svg { color: var(--navy); }
+.role-card.is-secondary svg { color: #8b6a12; }
+.role-card em { display: block; font-style: normal; font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; margin-bottom: 3px; }
+.role-card.is-primary em { color: var(--blue); }
+.role-card.is-secondary em { color: #8b6a12; }
+.role-card strong { display: block; color: #1b355a; font-size: 14px; margin-bottom: 4px; }
+.role-card strong span { color: var(--muted); font-weight: 600; font-size: 12px; }
+.role-card p { margin: 0; color: #4d5d72; font-size: 12.5px; line-height: 1.6; }
+
+.reads-what { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.reads-what > div { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.5fr) minmax(0, 1.4fr); gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+.reads-what > div:last-child { border-bottom: 0; }
+.reads-what > div:first-child { background: #f2f6fa; }
+.reads-what > div:first-child span { color: #58687c; font-weight: 800; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+.reads-what strong { color: #2b405a; font-size: 12px; }
+.reads-what span { color: #4a5a6e; font-size: 11.5px; line-height: 1.5; }
+.reads-what small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+@media (max-width: 860px) {
+  .custody-scope, .proof-split, .role-banner { grid-template-columns: 1fr; }
+  .reads-what > div { grid-template-columns: 1fr; gap: 4px; }
+}
