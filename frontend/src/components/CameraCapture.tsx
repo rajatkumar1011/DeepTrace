@@ -10,7 +10,13 @@
  * carries it, so the server still hashes the bytes it actually receives.
  */
 
-import { Camera, Check, LoaderCircle, RefreshCw, X } from "lucide-react";
+import {
+  FaCamera as Camera,
+  FaCheck as Check,
+  FaSpinner as LoaderCircle,
+  FaSyncAlt as RefreshCw,
+  FaTimes as X,
+} from "react-icons/fa";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const IDEAL_WIDTH = 1280;

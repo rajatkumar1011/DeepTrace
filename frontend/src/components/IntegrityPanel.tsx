@@ -1,6 +1,11 @@
 "use client";
 
-import { AlertTriangle, FileCheck2, LoaderCircle, ShieldCheck } from "lucide-react";
+import {
+  FaExclamationTriangle as AlertTriangle,
+  FaFileAlt as FileCheck2,
+  FaSpinner as LoaderCircle,
+  FaShieldAlt as ShieldCheck,
+} from "react-icons/fa";
 import { useState } from "react";
 import { INTEGRITY_COPY } from "@/config/constants";
 import { getApiError } from "@/lib/api/client";
@@ -54,7 +59,7 @@ export function IntegrityPanel({ investigationId, evidence }: { investigationId:
         <>
           <div className="chip-row">
             {Object.entries(grouped).map(([type, items]) => (
-              <span className="chip" key={type}>{items.length} × {type}</span>
+              <span className="chip" key={type}>{items.length} {type}{items.length === 1 ? "" : "s"}</span>
             ))}
           </div>
 

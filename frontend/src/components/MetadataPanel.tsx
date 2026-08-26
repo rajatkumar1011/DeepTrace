@@ -1,4 +1,10 @@
-import { BadgeCheck, FileCode2, Globe, Info, ShieldQuestion } from "lucide-react";
+import {
+  FaCertificate as BadgeCheck,
+  FaFileCode as FileCode2,
+  FaGlobe as Globe,
+  FaInfoCircle as Info,
+  FaQuestionCircle as ShieldQuestion,
+} from "react-icons/fa";
 import { dataOf, nested, num, rows, str, strings } from "@/lib/modules";
 import { formatBytes } from "@/lib/format";
 import type { InvestigationDetail } from "@/types";

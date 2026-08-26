@@ -13,7 +13,14 @@
  * step becomes a no-op and the upload stays small against the reference size cap.
  */
 
-import { Check, LoaderCircle, Mic, RefreshCw, Square, X } from "lucide-react";
+import {
+  FaCheck as Check,
+  FaSpinner as LoaderCircle,
+  FaMicrophone as Mic,
+  FaSyncAlt as RefreshCw,
+  FaSquare as Square,
+  FaTimes as X,
+} from "react-icons/fa";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const TARGET_SAMPLE_RATE = 16000;

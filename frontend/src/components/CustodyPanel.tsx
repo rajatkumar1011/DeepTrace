@@ -1,17 +1,17 @@
 "use client";
 
 import {
-  AlertTriangle,
-  BadgeCheck,
-  Fingerprint,
-  Link2,
-  LoaderCircle,
-  ScrollText,
-  ShieldQuestion,
-  Sparkles,
-  UserCheck,
-  XCircle,
-} from "lucide-react";
+  FaExclamationTriangle as AlertTriangle,
+  FaCertificate as BadgeCheck,
+  FaFingerprint as Fingerprint,
+  FaLink as Link2,
+  FaSpinner as LoaderCircle,
+  FaScroll as ScrollText,
+  FaQuestionCircle as ShieldQuestion,
+  FaMagic as Sparkles,
+  FaUserCheck as UserCheck,
+  FaTimesCircle as XCircle,
+} from "react-icons/fa";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { getApiError } from "@/lib/api/client";

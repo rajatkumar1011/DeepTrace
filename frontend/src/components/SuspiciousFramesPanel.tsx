@@ -1,4 +1,4 @@
-import { ImageOff, ScanSearch } from "lucide-react";
+import { FaImage as ImageOff, FaSearchPlus as ScanSearch } from "react-icons/fa";
 import { API_BASE_URL } from "@/config/constants";
 import { clock, dataOf, num, rows, str } from "@/lib/modules";
 import type { InvestigationDetail } from "@/types";
