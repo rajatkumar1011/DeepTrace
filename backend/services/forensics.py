@@ -30,8 +30,88 @@ def _binary(name: str) -> str:
     return shutil.which(name) or name
 
 
+def ffmpeg_binary(name: str = "ffmpeg") -> str:
+    """Public accessor for the resolved ffmpeg/ffprobe path.
+
+    Exposed so the offline harnesses in ``scripts/`` invoke the same binary the
+    request path does, instead of each re-implementing resolution and drifting.
+    """
+    if name not in ("ffmpeg", "ffprobe"):
+        raise ValueError("Only ffmpeg and ffprobe may be resolved here.")
+    return _binary(name)
+
+
+_probe_cache: dict[str, tuple[bool, str]] = {}
+
+
+def probe_binary(name: str) -> tuple[bool, str]:
+    """Actually run ``<name> -version`` and report whether it worked.
+
+    A ``shutil.which`` hit only proves a filename exists somewhere on PATH; it
+    does not prove the binary loads or is the tool it claims to be. Since
+    ``/api/health`` publishes this as a capability an operator relies on, it is
+    established by execution rather than by lookup. FFMPEG_PATH gets the same
+    treatment — an unvalidated hint used to force the flag true no matter what it
+    pointed at.
+
+    Cached per process: the result cannot change while the process runs, and
+    ``/api/health`` is polled.
+    """
+    if name in _probe_cache:
+        return _probe_cache[name]
+
+    resolved = _binary(name)
+    try:
+        completed = subprocess.run(
+            [resolved, "-version"],
+            capture_output=True, timeout=15, shell=False, check=False,
+        )
+        first_line = (completed.stdout or completed.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        if completed.returncode == 0 and first_line:
+            result = (True, first_line[0][:160])
+        else:
+            result = (False, f"{name} exited with status {completed.returncode}.")
+    except FileNotFoundError:
+        result = (False, f"{name} was not found on PATH"
+                         + (" or under FFMPEG_PATH." if _FFMPEG_HINT else "."))
+    except subprocess.TimeoutExpired:
+        result = (False, f"{name} -version did not return within 15 s.")
+    except OSError as error:
+        result = (False, f"{name} could not be executed: {str(error)[:120]}")
+
+    _probe_cache[name] = result
+    return result
+
+
 def ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None or bool(_FFMPEG_HINT)
+    """True only when both ffmpeg and ffprobe execute successfully.
+
+    Both, because the pipeline needs both — ``extract_audio_track`` shells out to
+    ffmpeg while ``probe_media`` shells out to ffprobe, so reporting the
+    capability on ffmpeg alone overstated what was actually usable.
+    """
+    return probe_binary("ffmpeg")[0] and probe_binary("ffprobe")[0]
+
+
+def ffmpeg_capability_detail() -> dict:
+    """The evidence behind ``ffmpeg_available()``, for /api/health and reports.
+
+    Deliberately reports the version banner and the binary's *filename* but never
+    its directory. The banner is the forensically useful part — it identifies the
+    exact build that produced a transcode — whereas the absolute path only
+    describes the operator's machine, and this dict is served over the API.
+    """
+    ffmpeg_ok, ffmpeg_detail = probe_binary("ffmpeg")
+    ffprobe_ok, ffprobe_detail = probe_binary("ffprobe")
+    return {
+        "available": ffmpeg_ok and ffprobe_ok,
+        "method": "Executed '-version' on each binary and checked the exit status.",
+        "ffmpeg": {"available": ffmpeg_ok, "detail": ffmpeg_detail,
+                   "binary": os.path.basename(_binary("ffmpeg")) if ffmpeg_ok else None},
+        "ffprobe": {"available": ffprobe_ok, "detail": ffprobe_detail,
+                    "binary": os.path.basename(_binary("ffprobe")) if ffprobe_ok else None},
+        "ffmpeg_path_env_set": bool(_FFMPEG_HINT),
+    }
 
 
 def utc_now_iso() -> str:

@@ -43,6 +43,11 @@ data/benchmark/pairs/
 data/benchmark/identity_pairs.csv
 data/benchmark/latest.json
 
+# Robustness results are equally machine-specific: the deltas depend on the local
+# ffmpeg build and on which media the operator pointed the harness at.
+data/benchmark/robustness_source/
+data/benchmark/robustness.json
+
 # Model and tool caches
 .cache/
 .huggingface/

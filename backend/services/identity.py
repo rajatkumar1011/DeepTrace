@@ -22,6 +22,20 @@ def get_models():
 
     return _heavy_models
 
+def active_model_name() -> str:
+    """Which face-embedding path is actually live, resolved by loading it.
+
+    Reported rather than assumed: the FaceNet path and the centred-crop fallback
+    produce different-length vectors with completely different meanings, so any
+    similarity figure has to say which one produced it. Mirrors
+    ``deepfake.active_model_name()``.
+    """
+    mtcnn, resnet = get_models()
+    if mtcnn is not None and resnet is not None:
+        return "facenet-pytorch InceptionResnetV1 (vggface2) with MTCNN detection"
+    return "Lightweight fallback (centred 64x64 greyscale crop, no face detection)"
+
+
 def _fallback_face_embedding(image_path: str):
     try:
         img = Image.open(image_path).convert('L')

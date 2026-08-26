@@ -57,6 +57,7 @@ from services.forensics import (
     collect_media_metadata,
     extract_sampled_frames,
     ffmpeg_available,
+    ffmpeg_capability_detail,
     probe_media,
     stream_to_disk,
     summarize_probe,
@@ -296,22 +297,42 @@ def health():
     except Exception:
         c2pa_available = False
 
+    ffmpeg_detail = ffmpeg_capability_detail()
+
     return {
         "status": "ok",
         "service": "DeepTrace",
         "version": "1.0.0",
         "capabilities": {
-            "ffmpeg": ffmpeg_available(),
+            "ffmpeg": ffmpeg_detail["available"],
             "deepfakebench_xception_weights": os.path.isfile(weights),
             "speaker_model_cached": os.path.isdir(speaker_dir),
             "c2pa_reader": c2pa_available,
+        },
+        # How each flag above was established, so a "true" is auditable rather
+        # than taken on trust. ffmpeg is the one flag proved by execution; the
+        # rest are file-presence checks and say so.
+        "capability_evidence": {
+            "ffmpeg": ffmpeg_detail,
+            "deepfakebench_xception_weights": {
+                "method": "Checked that the weights file exists on disk. Whether it loads is only "
+                          "established when a case is analysed.",
+            },
+            "speaker_model_cached": {
+                "method": "Checked that the SpeechBrain cache directory exists. Whether the model "
+                          "loads is only established when voice comparison runs.",
+            },
+            "c2pa_reader": {
+                "method": "Imported the c2pa reader module.",
+            },
         },
         "limits": {
             "max_upload_mb": MAX_UPLOAD_MB,
             "max_reference_mb": MAX_REFERENCE_MB,
             "frame_samples": FRAME_SAMPLES,
         },
-        "note": "Detection models are loaded on first use; capability flags report installed assets only.",
+        "note": "Detection models are loaded on first use; apart from ffmpeg, capability flags "
+                "report installed assets rather than a successful load.",
     }
 
 
@@ -1759,19 +1780,52 @@ def demo_assets():
 
 @app.get("/api/benchmark")
 def benchmark_results():
-    """Return the last stored benchmark run, if one has been executed."""
-    latest = os.path.join(BENCHMARK_DIR, "latest.json")
-    if not os.path.isfile(latest):
-        return {
-            "available": False,
-            "reason": (
-                "No benchmark has been run in this environment. Run scripts/benchmark.py against a "
-                "labelled dataset to produce metrics. DeepTrace does not ship pre-computed accuracy "
-                "figures."
-            ),
-        }
-    try:
-        with open(latest, "r", encoding="utf-8") as handle:
-            return {"available": True, **json.load(handle)}
-    except Exception as error:
-        return {"available": False, "reason": f"The stored benchmark file could not be read: {error}"}
+    """Return the last stored validation runs, if either has been executed.
+
+    Two independent things live here because they answer different questions and
+    fail independently. ``metrics`` needs a labelled dataset and reports
+    precision/recall/F1/false-positive rate; ``robustness`` needs no labels and
+    reports how far the same file's score moves when it is compressed, re-uploaded
+    or screen-recorded. Either can be absent, and each carries its own reason —
+    the endpoint never implies one covers for the other.
+    """
+    metrics_path = os.path.join(BENCHMARK_DIR, "latest.json")
+    robustness_path = os.path.join(BENCHMARK_DIR, "robustness.json")
+
+    def load(path: str, absent_reason: str) -> dict:
+        if not os.path.isfile(path):
+            return {"available": False, "reason": absent_reason}
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                return {"available": True, **json.load(handle)}
+        except Exception as error:
+            return {"available": False,
+                    "reason": f"The stored file could not be read: {error}"}
+
+    metrics = load(metrics_path, (
+        "No labelled evaluation has been run in this environment. Run scripts/benchmark.py "
+        "against a labelled dataset to produce precision, recall, F1 and false-positive rate. "
+        "DeepTrace does not ship pre-computed accuracy figures."
+    ))
+    robustness = load(robustness_path, (
+        "No robustness evaluation has been run in this environment. Run scripts/robustness.py "
+        "to measure how far scores move under compression, messaging re-upload and "
+        "screen-recording degradation. It needs no labelled data, only media and ffmpeg."
+    ))
+
+    return {
+        # Kept for the original contract: this flag has always meant "labelled
+        # metrics exist", and a caller that only checks it must not start seeing
+        # true because an unlabelled robustness run happened to be present.
+        "available": metrics["available"],
+        **{key: value for key, value in metrics.items() if key != "available"},
+        "metrics_available": metrics["available"],
+        "robustness_available": robustness["available"],
+        "robustness": robustness,
+        "boundary": (
+            "Labelled metrics say how often the detector is right on a dataset. Robustness says "
+            "how much its score moves when the same file is degraded. Neither is a claim about a "
+            "specific case, and neither is produced by anything other than running the real "
+            "pipeline on this machine."
+        ),
+    }
