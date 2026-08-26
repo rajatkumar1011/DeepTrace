@@ -1,7 +1,8 @@
 "use client";
 
-import { Accessibility, ExternalLink, Menu, ShieldCheck, X } from "lucide-react";
+import { ExternalLink, Menu, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
+import { AccessibilityMenu } from "@/components/AccessibilityMenu";
 import { APP, EXTERNAL_LINKS, NAV_ITEMS } from "@/config/constants";
 import type { ViewKey } from "@/types";
 
@@ -10,6 +11,9 @@ export function Header({ current, onNavigate }: { current: ViewKey; onNavigate: 
 
   return (
     <>
+      {/* First focusable element on the page: keyboard and screen-reader users
+          should not have to walk the whole header to reach the content. */}
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       <div className="gov-strip" aria-hidden="true" />
       <div className="official-note">
         <div className="page-shell official-note-inner">
@@ -32,7 +36,7 @@ export function Header({ current, onNavigate }: { current: ViewKey; onNavigate: 
             <a className="header-link" href={EXTERNAL_LINKS.cybercrimePortal} target="_blank" rel="noreferrer">
               Official Cybercrime Portal <ExternalLink size={14} />
             </a>
-            <span className="a11y-link"><Accessibility size={17} /> Accessibility</span>
+            <AccessibilityMenu />
             <button className="mobile-menu" onClick={() => setOpen((value) => !value)} aria-label="Toggle navigation">
               {open ? <X /> : <Menu />}
             </button>

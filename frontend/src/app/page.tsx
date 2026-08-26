@@ -137,7 +137,8 @@ export default function DeepTraceApp() {
           </div>
         </div>
       )}
-      <main>
+      {/* tabIndex so the skip link can move focus here, not just the scroll position. */}
+      <main id="main-content" tabIndex={-1}>
         {view === "home" && (
           <HomeView stats={stats} recentCases={investigations.slice(0, 3)} onStart={() => setView("start")} onOpenCase={openCase} />
         )}
@@ -642,6 +643,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
   const [loading, setLoading] = useState(true);
   const [actionBusy, setActionBusy] = useState(false);
   const [reportReady, setReportReady] = useState(false);
+  const [rerunAsked, setRerunAsked] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -677,7 +679,16 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
 
   const runAnalysis = async () => {
     setActionBusy(true); setError("");
-    try { await startAnalysis(id); await load(); onRefreshShared(); }
+    try {
+      await startAnalysis(id);
+      // The previous run's PDF is discarded server-side, so stop offering it here
+      // the moment the re-run is accepted: a report describing results that no
+      // longer exist must not stay one click from being filed.
+      setReportReady(false);
+      setRerunAsked(false);
+      await load();
+      onRefreshShared();
+    }
     catch (actionError) { setError(getApiError(actionError, "Analysis could not be started.")); }
     finally { setActionBusy(false); }
   };
@@ -728,6 +739,36 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
       )}
       {investigation.status === "failed" && (
         <div className="flow-actions end"><button className="btn btn-secondary" onClick={runAnalysis} disabled={actionBusy}><RefreshCw size={16} /> Retry analysis</button></div>
+      )}
+      {/* Re-running is destructive to the previous run's output, so it asks first
+          and says exactly what it discards. The original file is not among it. */}
+      {completed && !rerunAsked && (
+        <div className="flow-actions end">
+          <button className="btn btn-secondary" onClick={() => setRerunAsked(true)} disabled={actionBusy}>
+            <RefreshCw size={16} /> Run analysis again
+          </button>
+        </div>
+      )}
+      {completed && rerunAsked && (
+        <div className="analysis-progress rerun">
+          <RefreshCw size={22} />
+          <div>
+            <strong>Run every module again on this file?</strong>
+            <p>
+              The previous run&rsquo;s module results, sampled frames, extracted audio and generated
+              PDF are discarded and recomputed from the preserved original. The original file and its
+              SHA-256 hash are never modified, and the discard is written to this case&rsquo;s timeline.
+            </p>
+          </div>
+          <div className="rerun-actions">
+            <button className="btn btn-primary" onClick={runAnalysis} disabled={actionBusy}>
+              {actionBusy ? <><LoaderCircle className="spin" size={16} /> Starting…</> : "Yes, re-run"}
+            </button>
+            <button className="btn btn-secondary" onClick={() => setRerunAsked(false)} disabled={actionBusy}>
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
 
       <div className="case-main-grid">

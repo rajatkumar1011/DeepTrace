@@ -673,12 +673,18 @@ def _remove_quietly(path: str | None) -> None:
             pass
 
 
-def reset_derived_state(db: Session, inv: Investigation) -> int:
+def reset_derived_state(db: Session, inv: Investigation) -> tuple[int, bool]:
     """Clear the previous run's derived output so re-analysis is idempotent.
 
     Module results and derived artifacts (frames, overlays, extracted audio) are
     recomputed from the original every run. The original submission and any
     retrieved external copy are never touched.
+
+    The previously generated PDF goes too. It describes module results that no
+    longer exist, and the report is the one artifact that leaves this system and
+    reaches an investigator — leaving a superseded one downloadable would let it
+    be filed as the current analysis. Returns the derived-artifact count and
+    whether a report was discarded, so the timeline can state both.
     """
     db.query(AnalysisResult).filter(AnalysisResult.investigation_id == inv.id).delete(
         synchronize_session=False)
@@ -694,11 +700,16 @@ def reset_derived_state(db: Session, inv: Investigation) -> int:
             _remove_quietly(item.file_path)
         db.delete(item)
 
+    previous_report = report_path(inv.id)
+    report_discarded = os.path.isfile(previous_report)
+    if report_discarded:
+        _remove_quietly(previous_report)
+
     inv.frames_extracted = 0
     inv.overall_risk_score = None
     inv.risk_level = None
     db.commit()
-    return len(stale)
+    return len(stale), report_discarded
 
 
 def run_analysis(investigation_id: int) -> None:
@@ -712,7 +723,7 @@ def run_analysis(investigation_id: int) -> None:
             return
 
         is_rerun = bool(inv.analysis_completed_at) or bool(inv.analysis_results)
-        cleared = reset_derived_state(db, inv)
+        cleared, report_discarded = reset_derived_state(db, inv)
         inv.analysis_started_at = utc_now()
         inv.analysis_completed_at = None
         db.commit()
@@ -720,7 +731,9 @@ def run_analysis(investigation_id: int) -> None:
         if is_rerun:
             add_timeline(db, inv.id, "analysis_restarted",
                          f"Re-analysis started; {cleared} derived artifact(s) from the previous run "
-                         "were discarded. The original media and its hash are unchanged.")
+                         + ("and the previously generated PDF report were discarded. "
+                            if report_discarded else "were discarded. ")
+                         + "The original media and its hash are unchanged.")
         add_timeline(db, inv.id, "analysis_started", "Full analysis pipeline started.")
 
         # 1 ── Metadata & provenance fields

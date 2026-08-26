@@ -54,8 +54,57 @@ main { flex: 1; }
 .brand strong { display: block; color: var(--navy); font-size: 26px; letter-spacing: -.02em; line-height: 1; }
 .brand small { display: block; color: var(--muted); margin-top: 5px; font-size: 12px; font-weight: 600; }
 .header-actions { display: flex; align-items: center; gap: 18px; font-size: 13px; color: #40506a; }
-.header-link, .a11y-link { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.header-link { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
 .header-link:hover { color: var(--navy); text-decoration: underline; }
+
+/* ── Accessibility: the skip link, the preferences menu, and the display
+      settings that menu switches on. Each root class below is toggled by
+      AccessibilityMenu; nothing here fires without a deliberate choice. ── */
+.skip-link { position: absolute; left: -9999px; top: 0; z-index: 100; background: var(--navy); color: #fff; padding: 11px 18px; border-radius: 0 0 7px 0; font-weight: 700; font-size: 14px; text-decoration: none; }
+.skip-link:focus { left: 0; outline: 3px solid var(--orange); outline-offset: 1px; }
+
+.a11y-menu { position: relative; display: inline-flex; }
+.a11y-trigger { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: #fff; color: #40506a; border-radius: 7px; padding: 7px 11px; font-size: 13px; font-weight: 650; cursor: pointer; }
+.a11y-trigger:hover, .a11y-trigger[aria-expanded="true"] { border-color: var(--blue); color: var(--navy); }
+.a11y-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--orange); }
+.a11y-panel { position: absolute; right: 0; top: calc(100% + 10px); width: 300px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 15px; z-index: 60; text-align: left; }
+.a11y-panel-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 13px; }
+.a11y-panel-head div { flex: 1; }
+.a11y-panel h2 { margin: 0; font-size: 15px; color: var(--navy); }
+.a11y-panel-head p { margin: 3px 0 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.a11y-group { margin-bottom: 12px; }
+.a11y-group > span { display: block; font-size: 11px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.a11y-sizes { display: flex; gap: 6px; }
+.a11y-sizes button { flex: 1; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 8px 0; font-size: 12px; font-weight: 650; cursor: pointer; }
+.a11y-sizes button:hover { border-color: var(--blue); }
+.a11y-sizes button[aria-pressed="true"] { background: var(--navy); border-color: var(--navy); color: #fff; }
+.a11y-toggle { display: flex; width: 100%; align-items: center; gap: 9px; border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 10px; margin-bottom: 6px; font-size: 13px; font-weight: 620; cursor: pointer; text-align: left; }
+.a11y-toggle:hover { border-color: var(--blue); }
+.a11y-toggle > svg { flex: none; color: var(--blue); }
+.a11y-toggle > span { flex: 1; }
+.a11y-state { flex: none; font-size: 11px; font-weight: 750; letter-spacing: .04em; font-style: normal; color: var(--muted); }
+.a11y-toggle[aria-pressed="true"] { border-color: var(--navy); background: var(--blue-soft); color: var(--navy); }
+.a11y-toggle[aria-pressed="true"] .a11y-state { color: var(--navy); }
+.a11y-reset { width: 100%; border: 0; background: transparent; color: var(--blue); font-size: 12px; font-weight: 700; padding: 7px 0 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.a11y-reset:disabled { color: var(--muted); cursor: default; }
+.a11y-foot { margin: 11px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+html.a11y-underline a { text-decoration: underline; }
+html.a11y-still { scroll-behavior: auto; }
+html.a11y-still *, html.a11y-still *::before, html.a11y-still *::after {
+  animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important;
+}
+/* Overriding the tokens rather than individual rules, so the whole interface
+   moves together instead of only the parts a hand-written list remembered. */
+html.a11y-contrast {
+  --ink: #000000; --muted: #2f3947; --line: #6e7c8e; --line-dark: #4d5a6c;
+  --navy: #04173a; --blue: #0d47a1; --surface-soft: #ffffff;
+  --warning: #5e3200; --danger: #8a0f07; --success: #0b4a25;
+}
+html.a11y-contrast body { color: #000; }
+html.a11y-contrast a { text-decoration: underline; }
+html.a11y-contrast .content-card, html.a11y-contrast .overview-card, html.a11y-contrast .kv-row { border-color: var(--line-dark); }
+html.a11y-contrast .side-copy, html.a11y-contrast .panel-note, html.a11y-contrast .micro-disclaimer { color: #2f3947; }
 .mobile-menu { display: none; border: 1px solid var(--line); background: #fff; width: 42px; height: 42px; border-radius: 7px; align-items: center; justify-content: center; }
 .primary-nav { background: var(--navy); }
 .nav-inner { display: flex; align-items: stretch; min-height: 48px; }
@@ -343,7 +392,15 @@ main { flex: 1; }
   .header-main { min-height: 72px; }
   .brand strong { font-size: 22px; }
   .brand small { display: none; }
-  .header-actions .header-link, .header-actions .a11y-link { display: none; }
+  .header-actions .header-link { display: none; }
+  /* The accessibility control stays: hiding it on the screens most likely to
+     need larger text would defeat the point of having it. */
+  .a11y-trigger { padding: 8px; }
+  .a11y-trigger > span { display: none; }
+  .a11y-panel { width: min(300px, calc(100vw - 28px)); }
+  .analysis-progress.rerun { flex-direction: column; }
+  .rerun-actions { width: 100%; flex-direction: row; }
+  .rerun-actions .btn { flex: 1; justify-content: center; }
   .mobile-menu { display: inline-flex; }
   .primary-nav { display: none; }
   .primary-nav.open { display: block; }
@@ -401,6 +458,11 @@ main { flex: 1; }
 .progress-figure { color: var(--navy); font-weight: 850; font-size: 15px; flex: 0 0 auto; }
 .analysis-progress.failed { background: var(--danger-bg); border-color: #e2a8a3; color: var(--danger); }
 .analysis-progress.failed p { color: #8d3b32; }
+.analysis-progress.rerun { align-items: flex-start; background: var(--warning-bg); border-color: #f0c36b; color: #6e4700; }
+.analysis-progress.rerun > svg { flex: none; margin-top: 2px; color: var(--warning); }
+.analysis-progress.rerun p { color: #6b5327; }
+.rerun-actions { flex: none; display: flex; flex-direction: column; gap: 7px; }
+.rerun-actions .btn { white-space: nowrap; }
 
 .content-card-heading.tight { margin-bottom: 10px; }
 .panel-lead { color: #4d5d72; font-size: 13px; margin: 0 0 14px; }
