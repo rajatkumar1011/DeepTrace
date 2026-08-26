@@ -15,6 +15,7 @@ import {
   FaExternalLinkAlt as ExternalLink,
   FaFileAlt as FileCheck2,
   FaImage as FileImage,
+  FaIdCard as IdCard,
   FaSearch as FileSearch,
   FaFingerprint as Fingerprint,
   FaFolder as FolderLock,
@@ -60,6 +61,7 @@ import {
 } from "@/config/constants";
 import { getApiError } from "@/lib/api/client";
 import {
+  createCaseSubmitter,
   createInvestigation,
   enrollIdentity,
   generateReport,
@@ -80,6 +82,7 @@ import type {
   IdentityItem,
   InvestigationDetail,
   InvestigationItem,
+  SubmitterGender,
   TimelineEvent,
   ViewKey,
 } from "@/types";
@@ -325,7 +328,16 @@ function ProcessCard({ number, icon, title, body }: { number: string; icon: Reac
 }
 
 function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCreated: (id: number) => void }) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+
+  // Step 1 — self-declared identification details. These are recorded with the
+  // investigation but are not authenticated against UIDAI or a telecom provider.
+  const [submitterName, setSubmitterName] = useState("");
+  const [aadhaarNumber, setAadhaarNumber] = useState("");
+  const [gender, setGender] = useState<SubmitterGender | "">("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+
   const [identityMode, setIdentityMode] = useState<"existing" | "new" | "skip">(identities.length > 0 ? "existing" : "new");
   const [existingIdentityId, setExistingIdentityId] = useState<number | null>(identities[0]?.id ?? null);
   const [name, setName] = useState("");
@@ -357,6 +369,35 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
     return name || "New reference identity";
   }, [identityMode, existingIdentityId, identities, name]);
 
+  const genderLabel = useMemo(() => {
+    const labels: Record<SubmitterGender, string> = {
+      male: "Male",
+      female: "Female",
+      other: "Other",
+      prefer_not_to_say: "Prefer not to say",
+    };
+    return gender ? labels[gender] : "—";
+  }, [gender]);
+
+  const maskedAadhaar = aadhaarNumber.length === 12 ? `XXXX XXXX ${aadhaarNumber.slice(-4)}` : "—";
+  const maskedPhone = phoneNumber.length === 10 ? `+91 ••••••${phoneNumber.slice(-4)}` : "—";
+
+  const continueFromIdentification = () => {
+    setError("");
+    const cleanName = submitterName.trim();
+    const cleanAadhaar = aadhaarNumber.replace(/\D/g, "");
+    const cleanPhone = phoneNumber.replace(/\D/g, "");
+
+    if (cleanName.length < 2) return setError("Enter your full name before continuing.");
+    if (cleanAadhaar.length !== 12) return setError("Enter the 12-digit Aadhaar number.");
+    if (!gender) return setError("Select a gender option.");
+    if (!dateOfBirth) return setError("Enter your date of birth.");
+    if (new Date(`${dateOfBirth}T00:00:00`) > new Date()) return setError("Date of birth cannot be in the future.");
+    if (cleanPhone.length !== 10 || !/^[6-9]/.test(cleanPhone)) return setError("Enter a valid 10-digit Indian mobile number.");
+
+    setStep(2);
+  };
+
   const continueFromIdentity = () => {
     setError("");
     if (identityMode === "existing" && !existingIdentityId) return setError("Choose a reference identity or select the skip option.");
@@ -368,13 +409,13 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
         return setError("A reference face or voice sample is only enrolled with recorded consent. Tick the consent box to continue.");
       }
     }
-    setStep(2);
+    setStep(3);
   };
 
   const continueFromMedia = () => {
     setError("");
     if (!suspiciousFile) return setError("Choose the suspicious image, video or audio file you want to preserve.");
-    setStep(3);
+    setStep(4);
   };
 
   /** Load a bundled demo file as the submission, so the demo path needs no local media. */
@@ -391,17 +432,32 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
   };
 
   const submit = async () => {
-    if (!suspiciousFile) return;
+    if (!suspiciousFile || !gender) return;
     setBusy(true);
     setError("");
     try {
+      // The submitter row is created only when the user actually creates the case,
+      // avoiding unused identification rows if they abandon the wizard midway.
+      const submitter = await createCaseSubmitter({
+        fullName: submitterName,
+        aadhaarNumber,
+        gender,
+        dateOfBirth,
+        phoneNumber,
+      });
+
       let identityId: number | null = identityMode === "existing" ? existingIdentityId : null;
       if (identityMode === "new") {
         if (!referenceImage) throw new Error("Reference image is missing.");
         const identity = await enrollIdentity({ name: name.trim(), referenceImage, referenceAudio, consentGiven });
         identityId = identity.id;
       }
-      const investigation = await createInvestigation({ file: suspiciousFile, identityId, sourceUrls });
+      const investigation = await createInvestigation({
+        file: suspiciousFile,
+        submitterId: submitter.id,
+        identityId,
+        sourceUrls,
+      });
       try {
         await startAnalysis(investigation.id);
       } catch {
@@ -420,20 +476,113 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
       <div className="flow-heading">
         <span className="eyebrow"><ShieldCheck size={17} /> Start a new evidence case</span>
         <h1>We will guide you one step at a time.</h1>
-        <p>You can skip identity comparison if you do not have a clean reference photo right now. The suspicious media can still be preserved and analyzed.</p>
+        <p>Start with your identification details, then add an optional reference identity and the suspicious media you want DeepTrace to preserve and analyze.</p>
       </div>
 
       <ol className="stepper" aria-label="Evidence collection steps">
-        <StepItem number={1} active={step === 1} complete={step > 1} label="Reference identity" />
-        <StepItem number={2} active={step === 2} complete={step > 2} label="Suspicious media" />
-        <StepItem number={3} active={step === 3} complete={false} label="Review & begin" />
+        <StepItem number={1} active={step === 1} complete={step > 1} label="Identification" />
+        <StepItem number={2} active={step === 2} complete={step > 2} label="Reference identity" />
+        <StepItem number={3} active={step === 3} complete={step > 3} label="Suspicious media" />
+        <StepItem number={4} active={step === 4} complete={false} label="Review & begin" />
       </ol>
 
       {error && <div className="form-alert"><AlertCircle size={18} /><span>{error}</span></div>}
 
       {step === 1 && (
         <div className="flow-card">
-          <div className="flow-card-heading"><span className="flow-card-icon"><UserRoundCheck /></span><div><span>Step 1</span><h2>Who is being impersonated?</h2><p>This helps DeepTrace compare the suspicious media with a trusted reference.</p></div></div>
+          <div className="flow-card-heading">
+            <span className="flow-card-icon"><IdCard /></span>
+            <div>
+              <span>Step 1</span>
+              <h2>Identification details</h2>
+              <p>Tell us who is submitting this evidence case before continuing to the investigation steps.</p>
+            </div>
+          </div>
+
+          <div className="identification-notice">
+            <Info size={18} />
+            <div>
+              <strong>Identification record only — not identity verification.</strong>
+              <p>DeepTrace records the details you provide with the case. It does not authenticate Aadhaar, verify the phone number, or confirm these details against an external identity provider.</p>
+            </div>
+          </div>
+
+          <div className="form-grid identification-grid">
+            <div className="form-field span-2">
+              <label htmlFor="submitter-name">Full name</label>
+              <input
+                id="submitter-name"
+                value={submitterName}
+                onChange={(event) => setSubmitterName(event.target.value)}
+                placeholder="Enter your full name"
+                autoComplete="name"
+                maxLength={120}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="aadhaar-number">Aadhaar number</label>
+              <input
+                id="aadhaar-number"
+                value={aadhaarNumber}
+                onChange={(event) => setAadhaarNumber(event.target.value.replace(/\D/g, "").slice(0, 12))}
+                placeholder="12-digit Aadhaar number"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={12}
+              />
+              <small>12 digits · recorded as self-declared identification information only.</small>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="date-of-birth">Date of birth</label>
+              <input
+                id="date-of-birth"
+                type="date"
+                value={dateOfBirth}
+                onChange={(event) => setDateOfBirth(event.target.value)}
+                max={new Date().toISOString().slice(0, 10)}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="gender">Gender</label>
+              <select id="gender" value={gender} onChange={(event) => setGender(event.target.value as SubmitterGender | "")}>
+                <option value="">Select gender</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="phone-number">Phone number</label>
+              <div className="phone-input-row">
+                <span>+91</span>
+                <input
+                  id="phone-number"
+                  value={phoneNumber}
+                  onChange={(event) => setPhoneNumber(event.target.value.replace(/\D/g, "").slice(0, 10))}
+                  placeholder="10-digit mobile number"
+                  inputMode="numeric"
+                  autoComplete="tel-national"
+                  maxLength={10}
+                />
+              </div>
+              <small>Recorded with the case; no OTP or phone verification is performed.</small>
+            </div>
+          </div>
+
+          <div className="flow-actions end">
+            <button className="btn btn-primary" onClick={continueFromIdentification}>Continue to reference identity <ArrowRight size={17} /></button>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="flow-card">
+          <div className="flow-card-heading"><span className="flow-card-icon"><UserRoundCheck /></span><div><span>Step 2</span><h2>Who is being impersonated?</h2><p>This helps DeepTrace compare the suspicious media with a trusted reference. You can skip this comparison if you do not have a clean reference right now.</p></div></div>
 
           <div className="choice-grid">
             {identities.length > 0 && (
@@ -512,13 +661,16 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
             </>
           )}
 
-          <div className="flow-actions end"><button className="btn btn-primary" onClick={continueFromIdentity}>Continue <ArrowRight size={17} /></button></div>
+          <div className="flow-actions">
+            <button className="btn btn-ghost" onClick={() => setStep(1)}><ChevronLeft size={17} /> Back</button>
+            <button className="btn btn-primary" onClick={continueFromIdentity}>Continue <ArrowRight size={17} /></button>
+          </div>
         </div>
       )}
 
-      {step === 2 && (
+      {step === 3 && (
         <div className="flow-card">
-          <div className="flow-card-heading"><span className="flow-card-icon"><Upload /></span><div><span>Step 2</span><h2>Add the suspicious media</h2><p>Upload the image, video or audio you want to preserve. DeepTrace will calculate an integrity hash as soon as the case is created.</p></div></div>
+          <div className="flow-card-heading"><span className="flow-card-icon"><Upload /></span><div><span>Step 3</span><h2>Add the suspicious media</h2><p>Upload the image, video or audio you want to preserve. DeepTrace will calculate an integrity hash as soon as the case is created.</p></div></div>
           <div className="upload-zone">
             <input id="suspicious-file" type="file" accept={ACCEPTED_MEDIA.suspicious} onChange={(event) => setSuspiciousFile(event.target.files?.[0] || null)} />
             <label htmlFor="suspicious-file">
@@ -555,14 +707,19 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
           </div>
 
           <div className="support-note"><Info size={17} /><span>If this came from social media, also keep screenshots, the username and the date/time. DeepTrace preserves the uploaded media and can compare copies you point it at; it does not search the internet on your behalf.</span></div>
-          <div className="flow-actions"><button className="btn btn-ghost" onClick={() => setStep(1)}><ChevronLeft size={17} /> Back</button><button className="btn btn-primary" onClick={continueFromMedia}>Continue <ArrowRight size={17} /></button></div>
+          <div className="flow-actions"><button className="btn btn-ghost" onClick={() => setStep(2)}><ChevronLeft size={17} /> Back</button><button className="btn btn-primary" onClick={continueFromMedia}>Continue <ArrowRight size={17} /></button></div>
         </div>
       )}
 
-      {step === 3 && (
+      {step === 4 && (
         <div className="flow-card">
-          <div className="flow-card-heading"><span className="flow-card-icon"><ClipboardCheck /></span><div><span>Step 3</span><h2>Review before DeepTrace begins</h2><p>No technical choices are needed. DeepTrace will create the case, preserve the file and start the available analysis modules automatically.</p></div></div>
+          <div className="flow-card-heading"><span className="flow-card-icon"><ClipboardCheck /></span><div><span>Step 4</span><h2>Review before DeepTrace begins</h2><p>No technical choices are needed. DeepTrace will record the submitter details, create the case, preserve the file and start the available analysis modules automatically.</p></div></div>
           <div className="review-list">
+            <ReviewRow label="Submitted by" value={submitterName.trim() || "—"} />
+            <ReviewRow label="Aadhaar reference" value={maskedAadhaar} />
+            <ReviewRow label="Gender" value={genderLabel} />
+            <ReviewRow label="Date of birth" value={dateOfBirth || "—"} />
+            <ReviewRow label="Phone" value={maskedPhone} />
             <ReviewRow label="Reference identity" value={identitySummary} />
             <ReviewRow label="Suspicious media" value={suspiciousFile?.name || "—"} />
             <ReviewRow label="File size" value={formatBytes(suspiciousFile?.size)} />
@@ -579,8 +736,8 @@ function StartView({ identities, onCreated }: { identities: IdentityItem[]; onCr
               }
             />
           </div>
-          <div className="consent-note"><LockKeyhole size={19} /><div><strong>Your evidence is treated separately from the AI result.</strong><p>A model score does not overwrite the preserved original. DeepTrace keeps the evidence integrity hash and analytical findings as distinct records.</p></div></div>
-          <div className="flow-actions"><button className="btn btn-ghost" onClick={() => setStep(2)} disabled={busy}><ChevronLeft size={17} /> Back</button><button className="btn btn-primary btn-lg" onClick={submit} disabled={busy}>{busy ? <><LoaderCircle className="spin" size={18} /> Creating your case…</> : <>Create case and begin analysis <ArrowRight size={18} /></>}</button></div>
+          <div className="consent-note"><LockKeyhole size={19} /><div><strong>Your identification details are recorded, not independently verified.</strong><p>The Aadhaar and phone values are treated as self-declared case information. The evidence integrity hash and analytical findings remain separate records.</p></div></div>
+          <div className="flow-actions"><button className="btn btn-ghost" onClick={() => setStep(3)} disabled={busy}><ChevronLeft size={17} /> Back</button><button className="btn btn-primary btn-lg" onClick={submit} disabled={busy}>{busy ? <><LoaderCircle className="spin" size={18} /> Creating your case…</> : <>Create case and begin analysis <ArrowRight size={18} /></>}</button></div>
         </div>
       )}
 

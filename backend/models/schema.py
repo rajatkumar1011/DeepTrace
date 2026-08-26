@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, JSON, String
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -34,6 +34,27 @@ class Identity(Base):
     investigations = relationship("Investigation", back_populates="identity")
 
 
+class CaseSubmitter(Base):
+    """Self-declared identification details supplied before an investigation starts.
+
+    DeepTrace records these details for case association only. They are not
+    independently verified against UIDAI, telecom, or any external identity
+    provider.
+    """
+
+    __tablename__ = "case_submitters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String, nullable=False, index=True)
+    aadhaar_number = Column(String, nullable=False)
+    gender = Column(String, nullable=False)
+    date_of_birth = Column(Date, nullable=False)
+    phone_number = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    investigations = relationship("Investigation", back_populates="submitter")
+
+
 class Investigation(Base):
     """One case: a single piece of suspicious media plus everything derived from it."""
 
@@ -53,6 +74,11 @@ class Investigation(Base):
 
     identity_id = Column(Integer, ForeignKey("identities.id"), nullable=True)
     identity = relationship("Identity", back_populates="investigations")
+
+    # Nullable for legacy cases created before submitter identification existed.
+    # New investigations require this at the API layer.
+    submitter_id = Column(Integer, ForeignKey("case_submitters.id"), nullable=True)
+    submitter = relationship("CaseSubmitter", back_populates="investigations")
 
     duration_seconds = Column(Float, nullable=True)
     resolution = Column(String, nullable=True)

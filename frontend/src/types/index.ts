@@ -33,6 +33,16 @@ export interface IdentityItem {
   created_at: string;
 }
 
+
+export type SubmitterGender = "male" | "female" | "other" | "prefer_not_to_say";
+
+/** Receipt returned after self-declared case-submitter details are recorded. */
+export interface CaseSubmitterReceipt {
+  id: number;
+  full_name: string;
+  message: string;
+}
+
 export interface InvestigationItem {
   id: number;
   filename: string;
@@ -41,6 +51,7 @@ export interface InvestigationItem {
   risk_level: string | null;
   created_at: string;
   identity_id: number | null;
+  submitter_id?: number | null;
   overall_risk_score?: number | null;
 }
 

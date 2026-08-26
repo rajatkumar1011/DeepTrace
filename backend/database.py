@@ -46,6 +46,9 @@ _COLUMN_ADDITIONS = {
         ("media_metadata", "TEXT"),
         ("analysis_started_at", "DATETIME"),
         ("analysis_completed_at", "DATETIME"),
+        # Existing SQLite databases need this added explicitly. New databases
+        # receive it directly from models.schema.Investigation.
+        ("submitter_id", "INTEGER REFERENCES case_submitters(id)"),
     ],
     "analysis_results": [
         ("status", "VARCHAR"),

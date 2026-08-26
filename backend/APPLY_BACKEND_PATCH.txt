@@ -1,0 +1,102 @@
+DeepTrace — Identification Details backend patch
+================================================
+
+This patch DOES NOT modify services/report.py or any report-generation code.
+
+What it adds
+------------
+1. New case_submitters table with exactly these identification fields:
+   - full_name
+   - aadhaar_number
+   - gender
+   - date_of_birth
+   - phone_number
+
+2. investigations.submitter_id, linking each NEW investigation to the
+   identification record created before evidence collection.
+
+3. POST /api/submitter
+   Form fields:
+   - full_name
+   - aadhaar_number
+   - gender: male | female | other | prefer_not_to_say
+   - date_of_birth: YYYY-MM-DD
+   - phone_number
+
+   Response contains only id, full_name and a success message. Aadhaar and
+   phone are deliberately not echoed back by the API.
+
+4. POST /api/investigate now REQUIRES:
+   - submitter_id
+
+   Existing investigation fields remain unchanged.
+
+Database migration
+------------------
+The migration is additive and idempotent. It does not delete or rewrite any
+existing evidence or investigations. Legacy investigations keep submitter_id
+as NULL; new investigations are required by the API to provide one.
+
+From the backend directory, run:
+
+    python migrations/001_add_case_submitter.py
+
+You will see:
+
+    DeepTrace migration complete: case_submitters + investigations.submitter_id are ready.
+
+The normal application startup also calls migrate_sqlite(), so running the
+migration twice is harmless. Running the explicit script once before restarting
+is recommended.
+
+Apply steps
+-----------
+1. Back up deeptrace.db before changing schema.
+2. Extract this ZIP into your backend directory, replacing:
+       main.py
+       database.py
+       models/schema.py
+   and adding:
+       migrations/001_add_case_submitter.py
+3. Run:
+       python migrations/001_add_case_submitter.py
+4. Restart FastAPI.
+5. Do not test the existing frontend investigation upload yet: /api/investigate
+   now requires submitter_id. The frontend patch will create the submitter first
+   and send the returned id during investigation creation.
+
+API example
+-----------
+POST /api/submitter (multipart/form-data)
+
+    full_name=Example User
+    aadhaar_number=123456789012
+    gender=male
+    date_of_birth=2001-02-03
+    phone_number=9876543210
+
+Returns:
+
+    {
+      "id": 1,
+      "full_name": "Example User",
+      "message": "Identification details recorded."
+    }
+
+Then POST /api/investigate must include:
+
+    submitter_id=1
+
+Important scope note
+--------------------
+This records user-provided identification details only. It does not perform
+UIDAI/Aadhaar authentication, phone OTP verification, KYC, or external identity
+verification.
+
+Security note
+-------------
+The requested design stores Aadhaar and phone information in the local SQLite
+database. These are sensitive identifiers. Do not log them, return them from API
+responses, commit a populated deeptrace.db to Git, or expose/download the DB.
+For a production public deployment, encrypt sensitive fields at rest or reduce
+what is retained.

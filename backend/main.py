@@ -14,7 +14,7 @@ score, and no result is ever synthesised.
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +27,7 @@ from models.schema import (
     CONSENT_TEXT,
     CONSENT_TEXT_VERSION,
     AnalysisResult,
+    CaseSubmitter,
     Evidence,
     Identity,
     Investigation,
@@ -474,11 +475,94 @@ def get_identity(identity_id: int, db: Session = Depends(get_db)):
     return identity_payload(identity)
 
 
+# ─── Case submitter identification ───────────────────────────────────────────
+
+_ALLOWED_GENDERS = {"male", "female", "other", "prefer_not_to_say"}
+
+
+def _digits_only(value: str | None) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+@app.post("/api/submitter")
+def create_case_submitter(
+    full_name: str = Form(...),
+    aadhaar_number: str = Form(...),
+    gender: str = Form(...),
+    date_of_birth: date = Form(...),
+    phone_number: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Record self-declared identification details before case creation.
+
+    This endpoint validates only input format. It does not authenticate Aadhaar,
+    confirm phone ownership, or otherwise verify legal identity.
+    """
+    full_name = (full_name or "").strip()
+    if len(full_name) < 2 or len(full_name) > 120:
+        raise HTTPException(
+            status_code=422,
+            detail="Full name must be between 2 and 120 characters.",
+        )
+
+    aadhaar = _digits_only(aadhaar_number)
+    if len(aadhaar) != 12:
+        raise HTTPException(
+            status_code=422,
+            detail="Aadhaar number must contain exactly 12 digits.",
+        )
+
+    normalised_gender = (gender or "").strip().lower()
+    if normalised_gender not in _ALLOWED_GENDERS:
+        raise HTTPException(
+            status_code=422,
+            detail="Gender must be male, female, other, or prefer_not_to_say.",
+        )
+
+    if date_of_birth > utc_now().date():
+        raise HTTPException(status_code=422, detail="Date of birth cannot be in the future.")
+
+    phone = _digits_only(phone_number)
+    if len(phone) == 12 and phone.startswith("91"):
+        phone = phone[2:]
+    if len(phone) != 10 or phone[0] not in {"6", "7", "8", "9"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a valid 10-digit Indian mobile number.",
+        )
+
+    submitter = CaseSubmitter(
+        full_name=full_name,
+        aadhaar_number=aadhaar,
+        gender=normalised_gender,
+        date_of_birth=date_of_birth,
+        phone_number=phone,
+    )
+    try:
+        db.add(submitter)
+        db.commit()
+        db.refresh(submitter)
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save identification details. Please try again.",
+        ) from error
+
+    # Deliberately do not return Aadhaar or phone values to the client.
+    return {
+        "id": submitter.id,
+        "full_name": submitter.full_name,
+        "message": "Identification details recorded.",
+    }
+
+
 # ─── Investigation intake ────────────────────────────────────────────────────
 
 @app.post("/api/investigate")
 async def create_investigation(
     file: UploadFile = File(...),
+    submitter_id: int = Form(...),
     identity_id: int = Form(None),
     source_urls: str = Form(None),
     db: Session = Depends(get_db),
@@ -496,6 +580,13 @@ async def create_investigation(
             detail="Unsupported media type. Upload an image, video or audio file "
                    f"({', '.join(sorted(MEDIA_TYPES))}).",
         )
+    submitter = db.query(CaseSubmitter).filter(CaseSubmitter.id == submitter_id).first()
+    if not submitter:
+        raise HTTPException(
+            status_code=422,
+            detail="Identification details were not found. Complete the identification form first.",
+        )
+
     if identity_id is not None and not db.query(Identity.id).filter(Identity.id == identity_id).first():
         raise HTTPException(status_code=422, detail="The selected protected identity no longer exists.")
 
@@ -514,6 +605,7 @@ async def create_investigation(
         perceptual_hash=perceptual_hash,
         media_type=media_type,
         identity_id=identity_id,
+        submitter_id=submitter_id,
         status="pending",
         progress_stage="Awaiting analysis",
         progress_percent=0,
@@ -578,6 +670,7 @@ async def create_investigation(
         "status": investigation.status,
         "media_type": media_type,
         "sha256": sha256_hash,
+        "submitter_id": investigation.submitter_id,
         "source_urls": urls,
     }
 
@@ -598,6 +691,7 @@ def list_investigations(db: Session = Depends(get_db)):
             "created_at": str(inv.created_at) if inv.created_at else None,
             "identity_id": inv.identity_id,
             "identity_name": inv.identity.name if inv.identity else None,
+            "submitter_id": inv.submitter_id,
         }
         for inv in investigations
     ]
@@ -621,6 +715,7 @@ def get_investigation(investigation_id: int, db: Session = Depends(get_db)):
         "error_message": inv.error_message,
         "identity_id": inv.identity_id,
         "identity_name": inv.identity.name if inv.identity else None,
+        "submitter_id": inv.submitter_id,
         "duration_seconds": inv.duration_seconds,
         "resolution": inv.resolution,
         "fps": inv.fps,
