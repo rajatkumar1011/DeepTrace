@@ -35,7 +35,6 @@ from models.schema import (
 )
 from paths import (
     AUDIO_DIR,
-    BENCHMARK_DIR,
     DEMO_DIR,
     EVIDENCE_DIR,
     FRAMES_DIR,
@@ -62,6 +61,8 @@ from services.forensics import (
     stream_to_disk,
     summarize_probe,
 )
+from services.validation import BOUNDARY as VALIDATION_BOUNDARY
+from services.validation import load_metrics, load_robustness
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -1788,30 +1789,12 @@ def benchmark_results():
     reports how far the same file's score moves when it is compressed, re-uploaded
     or screen-recorded. Either can be absent, and each carries its own reason —
     the endpoint never implies one covers for the other.
+
+    The reading is delegated to services.validation so that this endpoint and the
+    PDF report cannot drift apart: both render the same loaded artifact.
     """
-    metrics_path = os.path.join(BENCHMARK_DIR, "latest.json")
-    robustness_path = os.path.join(BENCHMARK_DIR, "robustness.json")
-
-    def load(path: str, absent_reason: str) -> dict:
-        if not os.path.isfile(path):
-            return {"available": False, "reason": absent_reason}
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                return {"available": True, **json.load(handle)}
-        except Exception as error:
-            return {"available": False,
-                    "reason": f"The stored file could not be read: {error}"}
-
-    metrics = load(metrics_path, (
-        "No labelled evaluation has been run in this environment. Run scripts/benchmark.py "
-        "against a labelled dataset to produce precision, recall, F1 and false-positive rate. "
-        "DeepTrace does not ship pre-computed accuracy figures."
-    ))
-    robustness = load(robustness_path, (
-        "No robustness evaluation has been run in this environment. Run scripts/robustness.py "
-        "to measure how far scores move under compression, messaging re-upload and "
-        "screen-recording degradation. It needs no labelled data, only media and ffmpeg."
-    ))
+    metrics = load_metrics()
+    robustness = load_robustness()
 
     return {
         # Kept for the original contract: this flag has always meant "labelled
@@ -1822,10 +1805,5 @@ def benchmark_results():
         "metrics_available": metrics["available"],
         "robustness_available": robustness["available"],
         "robustness": robustness,
-        "boundary": (
-            "Labelled metrics say how often the detector is right on a dataset. Robustness says "
-            "how much its score moves when the same file is degraded. Neither is a claim about a "
-            "specific case, and neither is produced by anything other than running the real "
-            "pipeline on this machine."
-        ),
+        "boundary": VALIDATION_BOUNDARY,
     }

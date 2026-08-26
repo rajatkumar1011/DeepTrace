@@ -45,6 +45,7 @@ import { RiskPanel } from "@/components/RiskPanel";
 import { StatusPill } from "@/components/StatusPill";
 import { SuspiciousFramesPanel } from "@/components/SuspiciousFramesPanel";
 import { TracePanel } from "@/components/TracePanel";
+import { ValidationPanel } from "@/components/ValidationPanel";
 import { VoiceRecorder } from "@/components/VoiceRecorder";
 import {
   ACCEPTED_MEDIA,
@@ -937,6 +938,8 @@ function HowItWorksView({ onStart }: { onStart: () => void }) {
         <div><CircleHelp size={22} /><div><strong>What DeepTrace does not claim</strong><p>No internet-wide surveillance, no creator identification, no 100% accurate deepfake verdict, no guaranteed legal admissibility, and no automatic police or platform submission. Copy tracing compares only the specific public URLs or files you provide.</p></div></div>
         <button className="btn btn-primary" onClick={onStart}>Start evidence collection <ArrowRight size={17} /></button>
       </div>
+
+      <ValidationPanel />
     </section>
   );
 }

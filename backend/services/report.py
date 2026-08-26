@@ -1,9 +1,14 @@
 """Forensic incident report generation.
 
-Twenty-two sections, every value read from what the pipeline actually recorded. A
+Twenty-three sections, every value read from what the pipeline actually recorded. A
 module that did not run is printed as not-run, with the reason it gave — no
 section is filled with a plausible-looking placeholder, and the limitations
 section is assembled from the observed module statuses rather than a fixed list.
+
+Section 22 is the one exception to "everything here describes this case": it
+reports how the system itself scored on DeepTrace's own validation harnesses, and
+is labelled as such, because a case score means little to a reviewer who has no
+measurement of the detector producing it.
 """
 
 import os
@@ -25,6 +30,13 @@ from reportlab.platypus import (
 )
 
 from paths import PROJECT_ROOT, report_path, to_public_path
+from services.validation import (
+    BOUNDARY as VALIDATION_BOUNDARY,
+    METRICS_COMMAND,
+    ROBUSTNESS_COMMAND,
+    load_metrics,
+    load_robustness,
+)
 
 NAVY = colors.HexColor("#0b3954")
 SAFFRON = colors.HexColor("#b45309")
@@ -69,6 +81,31 @@ def _seconds(value) -> str:
     except (TypeError, ValueError):
         return str(value)
     return f"{int(total // 60):02d}:{total % 60:05.2f}"
+
+
+def _ratio(value) -> str:
+    """Format a validation ratio.
+
+    Distinct from ``_score`` in the one way that matters: a missing validation
+    metric is *undefined* (a class was absent, so the ratio has no denominator),
+    not merely unproduced, and it must never render as 0.000.
+    """
+    if value is None:
+        return "Not defined"
+    try:
+        return f"{float(value):.3f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _interval(value) -> str:
+    """Render a 95% confidence interval, or say plainly that there is none."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return "—"
+    try:
+        return f"{float(value[0]):.3f} – {float(value[1]):.3f}"
+    except (TypeError, ValueError):
+        return "—"
 
 
 def _status_label(payload: dict | None) -> str:
@@ -833,8 +870,11 @@ def generate_report(investigation_id: int, db_session) -> str | None:
              [34 * mm, 32 * mm, 20 * mm, 22 * mm, 18 * mm, CONTENT_WIDTH - 126 * mm])
         story.append(Paragraph("What each signal contributed", subheading))
         for signal in risk.get("signals") or []:
-            para(f"• <b>{escape(str(signal.get('label')))}</b> — {escape(str(signal.get('detail')))} "
-                 f"Source: {escape(str(signal.get('source_model') or 'n/a'))}.", small)
+            # Appended as a Paragraph rather than through para(), which escapes its
+            # whole argument and would print the <b> tags literally.
+            story.append(Paragraph(
+                f"• <b>{escape(str(signal.get('label')))}</b> — {escape(str(signal.get('detail')))} "
+                f"Source: {escape(str(signal.get('source_model') or 'n/a'))}.", small))
         excluded = risk.get("excluded_signals") or []
         if excluded:
             story.append(Paragraph("Signals excluded from the calculation", subheading))
@@ -884,6 +924,229 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     para(guidance.get("deeptrace_boundary") or "", small)
 
     # 22 ────────────────────────────────────────────────────────────────────
+    story.append(PageBreak())
+    section("System Validation — Measured Accuracy and Robustness")
+    story.append(Paragraph(
+        "<b>This section is about DeepTrace, not about this case.</b> Nothing below changes any "
+        "score, finding or conclusion in the preceding sections. It is here so that a reviewer "
+        "reading a case score can see how often the detector was right on data where the answer "
+        "was known, and how far its score moved when the same file was degraded — the two things "
+        "needed to decide how much weight the case score deserves.", body))
+    para(VALIDATION_BOUNDARY, small)
+    para("Every figure below was read from a file written by DeepTrace's own validation harness on "
+         "the machine that generated this report. No figure is a stored constant, none is copied "
+         "from a published benchmark, and where a harness has not been run this section reports "
+         "that instead of a number.", small)
+
+    metrics_run = load_metrics()
+    robustness_run = load_robustness()
+
+    # ── labelled accuracy ────────────────────────────────────────────────
+    story.append(Paragraph("Accuracy on labelled data — how often the detector is right",
+                           subheading))
+    detection = metrics_run.get("manipulation_detection") if metrics_run.get("available") else None
+    if not isinstance(detection, dict):
+        keyvalues([
+            ("Status", "Not measured in this environment"),
+            ("Reason", metrics_run.get("reason") or "No labelled evaluation result was stored."),
+            ("How to produce it", METRICS_COMMAND),
+        ])
+        para("No precision, recall, F1 or false-positive rate is reported for this build. An "
+             "unmeasured metric is not a passing metric, and no figure has been substituted for "
+             "the missing measurement.", small)
+    else:
+        point = detection.get("operating_point") or {}
+        class_counts = detection.get("class_counts") or {}
+        env = metrics_run.get("environment") or {}
+        keyvalues([
+            ("Files scored", detection.get("evaluated")),
+            ("Class balance", f"{class_counts.get('real', 0)} authentic, "
+                              f"{class_counts.get('fake', 0)} manipulated"),
+            ("Files skipped", detection.get("skipped_count")),
+            ("Model actually loaded", detection.get("model")),
+            ("Decision threshold", point.get("threshold", "Not recorded")),
+            ("Evaluated at (UTC)", metrics_run.get("generated_at_utc")),
+            ("Environment", f"Python {env.get('python')} on {env.get('platform')}, "
+                            f"ffmpeg {'available' if env.get('ffmpeg_available') else 'unavailable'}"),
+            ("Dataset fingerprint", detection.get("dataset_fingerprint")),
+        ])
+
+        if point:
+            grid(["Metric", "Value", "95% CI (Wilson)", "What the number counts"],
+                 [
+                     ["Precision", _ratio(point.get("precision")),
+                      _interval(point.get("precision_95_ci")),
+                      "Of the files flagged as manipulated, the share that really were."],
+                     ["Recall (sensitivity)", _ratio(point.get("recall_sensitivity")),
+                      _interval(point.get("recall_95_ci")),
+                      "Of the manipulated files, the share that were flagged."],
+                     ["F1", _ratio(point.get("f1")), "—",
+                      "Harmonic mean of precision and recall."],
+                     ["Specificity", _ratio(point.get("specificity")), "—",
+                      "Of the authentic files, the share correctly left unflagged."],
+                     ["False-positive rate", _ratio(point.get("false_positive_rate")),
+                      _interval(point.get("false_positive_rate_95_ci")),
+                      point.get("false_positive_rate_definition")
+                      or "The share of authentic files wrongly flagged as manipulated."],
+                     ["False-negative rate", _ratio(point.get("false_negative_rate")),
+                      _interval(point.get("false_negative_rate_95_ci")),
+                      point.get("false_negative_rate_definition")
+                      or "The share of manipulated files wrongly cleared as authentic."],
+                     ["Accuracy", _ratio(point.get("accuracy")),
+                      _interval(point.get("accuracy_95_ci")),
+                      "Both classes decided correctly, over all files scored."],
+                     ["ROC AUC", _ratio(detection.get("roc_auc")), "—",
+                      "Threshold-free separation between the two classes. 0.5 is chance."],
+                 ],
+                 [30 * mm, 17 * mm, 27 * mm, CONTENT_WIDTH - 74 * mm])
+            para(f"Measured at the same {point.get('threshold')} threshold the application itself "
+                 "uses, so these figures describe the behaviour the interface actually shows rather "
+                 "than a threshold chosen to flatter the result. The intervals are 95% Wilson "
+                 "intervals — on a set this size they are wide, and quoting the point estimate "
+                 "without them would overstate what was measured.", small)
+            grid(["True positive", "False positive", "True negative", "False negative"],
+                 [[point.get("true_positive"), point.get("false_positive"),
+                   point.get("true_negative"), point.get("false_negative")]],
+                 [CONTENT_WIDTH / 4] * 4)
+        else:
+            para("Only one class was present in the evaluated set, so precision, recall, F1 and the "
+                 "false-positive rate have no denominator. They are reported as undefined rather "
+                 "than as zero, which would read as a measured result of zero.", small)
+
+        distribution = detection.get("score_distribution") or {}
+        dist_rows = [
+            [label, stats.get("count"), _ratio(stats.get("mean")), _ratio(stats.get("std")),
+             _ratio(stats.get("min")), _ratio(stats.get("median")), _ratio(stats.get("max"))]
+            for label, stats in (("Authentic", distribution.get("real")),
+                                 ("Manipulated", distribution.get("fake")))
+            if isinstance(stats, dict)
+        ]
+        if dist_rows:
+            story.append(Paragraph("Score distribution by true class", subheading))
+            grid(["True class", "n", "Mean", "Std", "Min", "Median", "Max"], dist_rows,
+                 [30 * mm, 14 * mm] + [(CONTENT_WIDTH - 44 * mm) / 5] * 5)
+            para("Printed because it shows what the summary metrics cannot: whether the two classes "
+                 "separate at all. Overlapping means with a wide spread on one class is a weak "
+                 "signal regardless of where the threshold is placed.", small)
+
+        provenance_block = detection.get("dataset_provenance") or {}
+        if provenance_block:
+            story.append(Paragraph("Where the labels came from", subheading))
+            keyvalues([
+                ("Label source", provenance_block.get("label_source")),
+                ("Declared by", provenance_block.get("declared_by")),
+                ("Set built (UTC)", provenance_block.get("generated_at_utc")),
+                ("Construction", provenance_block.get("construction")),
+                ("Confound control", provenance_block.get("confound_control")),
+            ])
+            families = [entry for entry in (provenance_block.get("manipulation_families") or [])
+                        if isinstance(entry, dict)]
+            if families:
+                grid(["Family", "Class", "Files", "What was done to the file"],
+                     [[entry.get("name"), entry.get("class"), entry.get("count"),
+                       entry.get("description")] for entry in families],
+                     [28 * mm, 22 * mm, 13 * mm, CONTENT_WIDTH - 63 * mm])
+            if provenance_block.get("manifest_mismatch"):
+                story.append(Paragraph(
+                    f"<b>Warning.</b> {escape(str(provenance_block['manifest_mismatch']))}", small))
+
+        caveats = [text for text in (detection.get("caveats") or []) if text]
+        if caveats:
+            story.append(Paragraph("What these accuracy figures do not say", subheading))
+            for text in caveats:
+                para(f"• {text}", small)
+
+    # ── robustness ───────────────────────────────────────────────────────
+    story.append(Paragraph("Robustness under degradation — how far the score moves",
+                           subheading))
+    if not robustness_run.get("available"):
+        keyvalues([
+            ("Status", "Not measured in this environment"),
+            ("Reason", robustness_run.get("reason") or "No robustness result was stored."),
+            ("How to produce it", ROBUSTNESS_COMMAND),
+        ])
+        para("Nothing is reported about behaviour on compressed, re-uploaded or screen-recorded "
+             "copies of a file. That gap is stated rather than left to be inferred from silence.",
+             small)
+    else:
+        source = robustness_run.get("source") or {}
+        keyvalues([
+            ("Method", "The same file is scored before and after a real ffmpeg degradation, and the "
+                       "two scores are compared. No labels are needed: the ground truth is that "
+                       "both copies depict the same content."),
+            ("Source media", f"{source.get('file_count', 0)} file(s) from "
+                             f"{source.get('description', 'an unrecorded source')}"),
+            ("Source fingerprint", source.get("fingerprint")),
+            ("Decision threshold", robustness_run.get("threshold")),
+            ("Evaluated at (UTC)", robustness_run.get("generated_at_utc")),
+        ])
+
+        relevant = {"video": "visual", "image": "visual", "audio": "audio"}.get(inv.media_type or "")
+        for channel_key, channel_title in (("visual", "Image and video manipulation signal"),
+                                           ("audio", "Audio editing indicator")):
+            channel = robustness_run.get(channel_key) or {}
+            overall = channel.get("overall") or {}
+            bearing = (" — this is the channel that bears on the present case"
+                       if channel_key == relevant else "")
+            story.append(Paragraph(f"{channel_title}{bearing}", subheading))
+            if not overall or not overall.get("paired_comparisons"):
+                para("No paired comparison completed for this channel, so no robustness figure is "
+                     "reported for it. That is an absence of measurement, not a passing result.",
+                     small)
+                continue
+            grid(["Measure", "Value", "95% CI (Wilson)", "Reading"],
+                 [
+                     ["Decision agreement", _ratio(overall.get("decision_agreement")),
+                      _interval(overall.get("decision_agreement_95_ci")),
+                      f"Over {overall.get('paired_comparisons')} pairs, the share where the "
+                      "degraded copy landed on the same side of the threshold as the original."],
+                     ["Agreement, clear-cut only", _ratio(overall.get("clear_cut_agreement")),
+                      _interval(overall.get("clear_cut_agreement_95_ci")),
+                      f"Restricted to the {overall.get('clear_cut_comparisons')} file(s) whose "
+                      f"original score was not borderline; "
+                      f"{overall.get('borderline_baselines')} borderline baseline(s) excluded, "
+                      "because a file scoring within 0.05 of the threshold flips under almost any "
+                      "transform."],
+                     ["Mean absolute score shift", _ratio(overall.get("mean_absolute_delta")),
+                      "—",
+                      "Mean change in the score itself. High agreement with a large shift still "
+                      "means the score is unstable."],
+                 ],
+                 [38 * mm, 17 * mm, 27 * mm, CONTENT_WIDTH - 82 * mm])
+            worst = overall.get("most_disruptive_transform") or {}
+            if worst:
+                story.append(Paragraph(
+                    "Most disruptive transform for this channel: "
+                    f"<b>{escape(str(worst.get('label')))}</b> "
+                    f"({escape(str(worst.get('media_type')))}), mean shift "
+                    f"{escape(_ratio(worst.get('mean_absolute_delta')))}, agreement "
+                    f"{escape(_ratio(worst.get('decision_agreement')))}.", small))
+            transforms = [entry for entry in (channel.get("per_transform") or [])
+                          if isinstance(entry, dict)]
+            if transforms:
+                grid(["Transform", "Media", "Pairs", "Mean shift", "Agreement", "Direction of drift"],
+                     [[entry.get("label"), entry.get("media_type"),
+                       f"{entry.get('files_compared')}"
+                       + (f" (+{entry.get('files_failed')} failed)"
+                          if entry.get("files_failed") else ""),
+                       _ratio(entry.get("mean_absolute_delta")),
+                       _ratio(entry.get("decision_agreement")),
+                       # The script itself says "no consistent direction" when the
+                       # mean signed shift is within +/-0.005, so an absent value
+                       # here can only mean no pair completed — not a null result.
+                       entry.get("signed_delta_direction") or "not measured"]
+                      for entry in transforms],
+                     [CONTENT_WIDTH - 96 * mm, 16 * mm, 20 * mm, 20 * mm, 20 * mm, 20 * mm])
+                para("Direction is the sign of the mean change, printed so that a systematic drift "
+                     "stays visible even where the decision happened not to flip.", small)
+
+        robustness_caveats = [text for text in (robustness_run.get("caveats") or []) if text]
+        if robustness_caveats:
+            story.append(Paragraph("What these robustness figures do not say", subheading))
+            for text in robustness_caveats:
+                para(f"• {text}", small)
+
+    # 23 ────────────────────────────────────────────────────────────────────
     section("Methodology, Models, Limitations and Notice")
     story.append(Paragraph("Models and methods actually used in this case", subheading))
     model_rows = [

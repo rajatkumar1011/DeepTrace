@@ -1,5 +1,6 @@
 import { API_PATHS } from "@/config/constants";
 import type {
+  BenchmarkPayload,
   ConsentText,
   CustodyRecord,
   DashboardStats,
@@ -139,4 +140,14 @@ export async function generateReport(id: number) {
 
 export async function getDemoAssets() {
   return (await api.get<DemoAssets>(API_PATHS.demoAssets)).data;
+}
+
+/**
+ * The stored validation runs. Both halves can be absent independently, and the
+ * payload carries its own reason when they are — DeepTrace ships no pre-computed
+ * accuracy figures, so an empty response is the correct answer on a machine where
+ * neither harness has been run.
+ */
+export async function getBenchmark() {
+  return (await api.get<BenchmarkPayload>(API_PATHS.benchmark)).data;
 }

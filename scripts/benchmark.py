@@ -141,7 +141,13 @@ def confusion_at(scores: list[float], labels: list[int], threshold: float) -> di
         "accuracy": ratio(tp + tn, total),
         "accuracy_95_ci": wilson_interval(tp + tn, total),
         "precision": precision,
+        # Precision and recall are binomial proportions like accuracy — TP over the
+        # flagged files, and TP over the manipulated files — so each gets the same
+        # Wilson interval. On a small dataset the interval is the number that keeps
+        # a headline precision from being read as a settled figure.
+        "precision_95_ci": wilson_interval(tp, tp + fp),
         "recall_sensitivity": recall,
+        "recall_95_ci": wilson_interval(tp, tp + fn),
         "specificity": ratio(tn, tn + fp),
         "f1": f1,
         # Authentic files wrongly flagged, over all authentic files.

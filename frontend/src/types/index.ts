@@ -264,4 +264,136 @@ export interface DemoAssets {
   note: string;
 }
 
+/**
+ * Validation payload from /api/benchmark.
+ *
+ * Nearly every field is optional because the endpoint reports two independent
+ * runs that fail independently: a labelled evaluation needs a dataset, a
+ * robustness evaluation needs only media and ffmpeg. Modelling them as optional
+ * is what forces the UI to render an honest "not measured here" instead of a
+ * zero, which would read as a measured result of zero.
+ */
+export interface ConfusionPoint {
+  threshold: number;
+  true_positive?: number;
+  false_positive?: number;
+  true_negative?: number;
+  false_negative?: number;
+  accuracy: number | null;
+  accuracy_95_ci?: [number, number] | null;
+  precision: number | null;
+  precision_95_ci?: [number, number] | null;
+  /** Named as the backend names it: recall and sensitivity are the same quantity. */
+  recall_sensitivity: number | null;
+  recall_95_ci?: [number, number] | null;
+  specificity?: number | null;
+  f1: number | null;
+  false_positive_rate: number | null;
+  false_positive_rate_95_ci?: [number, number] | null;
+  false_negative_rate: number | null;
+  false_negative_rate_95_ci?: [number, number] | null;
+  false_positive_rate_definition?: string;
+  false_negative_rate_definition?: string;
+}
+
+export interface DatasetProvenance {
+  label_source: string;
+  declared_by?: string | null;
+  generated_at_utc?: string | null;
+  construction?: string | null;
+  manipulation_families?: { name: string; class: string; description: string; count: number }[] | null;
+  confound_control?: string | null;
+  transferability_warning?: string | null;
+  independence_warning?: string | null;
+  scale_warning?: string | null;
+  declared_counts?: Record<string, number> | null;
+  scored_counts?: Record<string, number> | null;
+  manifest_matches_directory?: boolean;
+  manifest_mismatch?: string | null;
+  source_media?: { name: string; media_type: string | null; sha256: string | null }[] | null;
+  note?: string | null;
+}
+
+export interface ManipulationMetrics {
+  evaluated: number;
+  class_counts?: { real: number; fake: number };
+  skipped_count?: number;
+  model?: string;
+  operating_point?: ConfusionPoint | null;
+  roc_auc?: number | null;
+  threshold_sweep?: ConfusionPoint[];
+  score_distribution?: Record<string, { count: number; mean: number; std: number; min: number; median: number; max: number } | null>;
+  face_detection_rate?: number;
+  dataset_provenance?: DatasetProvenance;
+  caveats?: string[];
+  dataset_fingerprint?: string;
+  note?: string;
+}
+
+export interface TransformSummary {
+  key: string;
+  label: string;
+  media_type: string;
+  stands_for: string;
+  family: string;
+  files_compared: number;
+  files_failed: number;
+  mean_absolute_delta: number | null;
+  max_absolute_delta: number | null;
+  mean_signed_delta: number | null;
+  signed_delta_direction: string | null;
+  decisions_preserved: number;
+  decision_agreement: number | null;
+  became_flagged: number;
+  became_cleared: number;
+  borderline_baselines: number;
+  clear_cut_compared: number;
+  clear_cut_agreement: number | null;
+}
+
+export interface RobustnessChannel {
+  channel: string;
+  per_transform: TransformSummary[];
+  overall: {
+    paired_comparisons: number;
+    decisions_preserved: number;
+    decision_agreement: number | null;
+    decision_agreement_95_ci?: [number, number] | null;
+    borderline_baselines: number;
+    clear_cut_comparisons: number;
+    clear_cut_agreement: number | null;
+    clear_cut_agreement_95_ci?: [number, number] | null;
+    mean_absolute_delta: number | null;
+    most_disruptive_transform?: { key: string; media_type: string; label: string; mean_absolute_delta: number | null; decision_agreement: number | null } | null;
+  } | null;
+}
+
+export interface RobustnessPayload {
+  available: boolean;
+  reason?: string;
+  generated_at_utc?: string;
+  threshold?: number;
+  environment?: Record<string, unknown>;
+  source?: { description: string; file_count: number; fingerprint: string };
+  what_this_measures?: string;
+  visual?: RobustnessChannel;
+  audio?: RobustnessChannel;
+  caveats?: string[];
+}
+
+export interface BenchmarkPayload {
+  available: boolean;
+  metrics_available: boolean;
+  robustness_available: boolean;
+  boundary: string;
+  reason?: string;
+  generated_at_utc?: string;
+  duration_seconds?: number;
+  environment?: Record<string, unknown>;
+  manipulation_detection?: ManipulationMetrics | null;
+  identity_matching?: Record<string, unknown> | null;
+  provenance?: Record<string, unknown> | null;
+  robustness: RobustnessPayload;
+}
+
 export type ViewKey = "home" | "start" | "cases" | "case" | "help";

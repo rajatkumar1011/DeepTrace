@@ -27,6 +27,7 @@ export const API_PATHS = {
   report: (id: number) => `/api/investigation/${id}/report`,
   reportDownload: (id: number) => `/api/report/${id}/download`,
   demoAssets: "/api/demo/assets",
+  benchmark: "/api/benchmark",
 } as const;
 
 export const EXTERNAL_LINKS = {

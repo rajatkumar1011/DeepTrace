@@ -22,3 +22,10 @@ facenet-pytorch==2.6.0
 transformers==4.41.2
 SpeechBrain==1.0.3
 c2pa-python==0.37.5
+
+# Verification tools. Not imported by the running service — they are used by
+# backend/tests and scripts/smoke_e2e.py, and are listed here rather than pinned
+# above so a deployment install does not pull them in:
+#   pip install pytest pypdf
+# Without pypdf the smoke test still runs; it skips the report-content assertions
+# and says so, rather than passing them silently.

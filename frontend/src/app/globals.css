@@ -679,3 +679,35 @@ main { flex: 1; }
   .custody-scope, .proof-split, .role-banner { grid-template-columns: 1fr; }
   .reads-what > div { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* ── Validation: labelled metrics and robustness under degradation ─────────── */
+
+.validation-panel { margin-top: 26px; text-align: left; }
+
+.metric-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 11px; margin: 14px 0 0; }
+.metric-tile { display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--line); border-radius: 7px; padding: 12px 14px; background: #f8fafc; }
+.metric-tile-warn { background: #fdfaf5; border-color: #e8dcc4; }
+.metric-tile-label { display: flex; align-items: center; gap: 5px; color: #58687c; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.metric-tile-label svg { color: var(--blue); }
+.metric-tile-warn .metric-tile-label svg { color: #a37a12; }
+.metric-tile > strong { color: #1b355a; font-size: 21px; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.metric-tile-missing { color: var(--muted) !important; font-size: 14px !important; font-weight: 700; }
+.metric-tile-interval { color: #58687c; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.metric-tile small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+.not-measured { border: 1px dashed #cbd5e1; border-radius: 7px; padding: 14px 16px; background: #fafbfc; }
+.not-measured .inline-empty { margin: 0; }
+.not-measured .hash-box { margin-top: 11px; }
+
+.robustness-channel { margin-top: 18px; }
+.robustness-channel h4 { color: #2b405a; font-size: 12.5px; margin: 0 0 2px; }
+
+.sweep-table .mini-table-head,
+.sweep-table .mini-table-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.sweep-table .mini-table-row { font-variant-numeric: tabular-nums; }
+
+.robustness-table .mini-table-head,
+.robustness-table .mini-table-row { grid-template-columns: minmax(0, 2fr) minmax(0, .7fr) minmax(0, .8fr) minmax(0, .9fr) minmax(0, .9fr) minmax(0, 1.1fr); }
+
+.caveat-list { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 8px; }
+.caveat-list li { color: #4a5a6e; font-size: 11.5px; line-height: 1.55; }
