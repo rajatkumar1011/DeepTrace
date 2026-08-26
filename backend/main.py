@@ -757,7 +757,7 @@ def run_analysis(investigation_id: int) -> None:
         set_progress(db, inv, "Checking A/V consistency", 84)
         consistency_result = _stage_consistency(db, inv, frame_items, audio_path, probe_summary)
 
-        # 9 ── Provenance / C2PA
+        # 9 ── Provenance: declared credentials, then published copies
         set_progress(db, inv, "Reading Content Credentials", 88)
         provenance_result = _stage_provenance(db, inv)
 
@@ -1276,6 +1276,17 @@ def _stage_consistency(db: Session, inv: Investigation, frame_items: list[dict],
 
 
 def _stage_provenance(db: Session, inv: Investigation) -> dict | None:
+    """Provenance in both senses: what the file declares, and where else it exists.
+
+    C2PA answers "does this file carry signed provenance of its own?". The
+    reverse-image search answers "has this media been published elsewhere, and
+    does the media on those pages actually match this file?". They are recorded
+    together under one module because an investigator asks them as one question,
+    but they are kept as separate sub-payloads with separate statuses because
+    neither substitutes for the other: absent credentials say nothing about
+    where a file has appeared, and a matched copy says nothing about whether
+    the bytes are signed.
+    """
     from services.provenance import inspect_c2pa
 
     try:
@@ -1288,12 +1299,65 @@ def _stage_provenance(db: Session, inv: Investigation) -> dict | None:
             "method": "c2pa-python",
         }
     payload.setdefault("credentials_found", False)
+
+    payload["external_search"] = _provenance_external_search(db, inv)
+
     record_result(db, inv.id, "provenance", payload,
                   status="completed" if payload.get("credentials_found") else "no_credentials")
     add_timeline(db, inv.id, "provenance_check",
                  "Content Credentials present and read." if payload.get("credentials_found")
                  else "No Content Credentials are attached to this file (normal for most media).")
     return payload
+
+
+def _provenance_external_search(db: Session, inv: Investigation) -> dict:
+    """Run reverse-image discovery and local verification, and log what happened.
+
+    Every outcome is recorded as itself. A missing API key, a failed lookup and a
+    lookup that genuinely found nothing are three different results, and none of
+    them is allowed to render as the others.
+    """
+    from services import provenance_search
+
+    if not provenance_search.is_configured():
+        add_timeline(db, inv.id, "provenance_search_skipped",
+                     "External source search was not run: no reverse-image search key is configured.")
+        return {
+            "status": "not_configured",
+            "reason": ("No SerpApi key is configured on this server, so no external source search "
+                       "was attempted. This is a configuration state, not a finding about the media."),
+            "sources": [],
+            "sources_discovered": 0,
+            "sources_verified": 0,
+        }
+
+    set_progress(db, inv, "Searching for published copies", 89)
+    try:
+        result = provenance_search.estimate(inv.file_path, inv.media_type)
+    except Exception as error:
+        print(f"Provenance search error: {error}")
+        add_timeline(db, inv.id, "provenance_search_failed",
+                     f"External source search could not be completed: {str(error)[:180]}")
+        return {
+            "status": "failed",
+            "reason": f"The external source search failed: {str(error)[:200]}",
+            "sources": [],
+            "sources_discovered": 0,
+            "sources_verified": 0,
+        }
+
+    discovered = result.get("sources_discovered", 0)
+    verified = result.get("sources_verified", 0)
+    if result.get("status") == "completed":
+        add_timeline(db, inv.id, "provenance_search",
+                     f"Reverse-image search returned {discovered} candidate page(s); "
+                     f"{verified} served media matching this file.")
+    else:
+        add_timeline(db, inv.id, "provenance_search",
+                     f"External source search finished as '{result.get('status')}': "
+                     f"{result.get('reason') or 'see the provenance module for detail.'}")
+    return result
+
 
 
 def _collect_hash_items(rows) -> list[dict]:

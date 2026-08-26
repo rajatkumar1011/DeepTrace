@@ -114,6 +114,19 @@ def _status_label(payload: dict | None) -> str:
     return STATUS_LABELS.get(payload.get("status"), _text(payload.get("status")))
 
 
+def _archive_stamp(value) -> str:
+    """Wayback CDX timestamps are YYYYMMDDhhmmss, which reads as a number.
+
+    Rendered as a date so a reader does not mistake a capture time for an ID —
+    and left verbatim if it is not that shape, rather than silently reformatted.
+    """
+    text = _text(value)
+    if len(text) >= 8 and text[:8].isdigit():
+        stamp = f"{text[0:4]}-{text[4:6]}-{text[6:8]}"
+        return f"{stamp} {text[8:10]}:{text[10:12]} UTC" if len(text) >= 12 else stamp
+    return text or "—"
+
+
 def on_disk(path: str | None) -> str | None:
     """Resolve a stored artifact path to a readable file, or None.
 
@@ -272,6 +285,81 @@ def generate_report(investigation_id: int, db_session) -> str | None:
              [[Paragraph(f"<b>{escape(entry['claim'])}</b>", small), entry["detail"]]
               for entry in entries],
              [62 * mm, CONTENT_WIDTH - 62 * mm])
+
+    def _located_sources(search: dict) -> None:
+        """Where else this media was found, and how much of that was verified.
+
+        Discovery and verification are printed as separate counts. A page returned
+        by a reverse-image index is a lead; only a page whose served media matched
+        this file on DeepTrace's own comparison is printed as a match. Merging the
+        two numbers would let a third party's similarity guess read as a forensic
+        finding in a document intended for an investigator.
+        """
+        story.append(Paragraph("Located sources (reverse-image search and local verification)",
+                               subheading))
+        status = search.get("status")
+        if status != "completed":
+            keyvalues([
+                ("Status", _status_label(search) if search else "Did not run"),
+                ("Reason", search.get("reason") or "No external source search was recorded."),
+                ("Engine", search.get("engine") or "Not applicable"),
+            ])
+            para("No source list is reported. An unavailable or empty search is not evidence that "
+                 "the media was never published elsewhere.", small)
+            return
+
+        keyvalues([
+            ("Discovery engine", search.get("engine")),
+            ("Query frames submitted", search.get("frames_searched")),
+            ("Raw index matches", search.get("raw_match_count")),
+            ("Unique candidate pages", search.get("unique_source_count")),
+            ("Pages verified locally", search.get("sources_checked")),
+            ("Pages whose media matched this file", search.get("sources_verified")),
+            ("Pages that could not be retrieved", search.get("sources_unreachable")),
+            ("Candidate video download", search.get("candidate_video_download")),
+            ("Earliest archived capture among matches",
+             f"{_archive_stamp(search.get('earliest_observed_at'))} — {search.get('earliest_observed_url')}"
+             if search.get("earliest_observed_at") else "None recorded"),
+        ])
+
+        sources = [item for item in (search.get("sources") or []) if isinstance(item, dict)]
+        if sources:
+            grid(["#", "Source URL", "Result", "Media similarity", "Face", "First archived"],
+                 [[
+                     index,
+                     Paragraph(escape(str(item.get("url") or "Not recorded")), mono),
+                     (item.get("status") or "unknown").replace("_", " "),
+                     _score(item.get("media_score")) if item.get("media_score") is not None else "—",
+                     _score(item.get("face_similarity")) if item.get("face_similarity") is not None else "—",
+                     _archive_stamp(item.get("first_observed")),
+                 ] for index, item in enumerate(sources, 1)],
+                 [8 * mm, CONTENT_WIDTH - 88 * mm, 26 * mm, 22 * mm, 14 * mm, 18 * mm])
+
+            matched = [item for item in sources if item.get("media_verified")]
+            if matched:
+                story.append(Paragraph("Verified matches in detail", subheading))
+                for item in matched:
+                    keyvalues([
+                        ("Source", item.get("url")),
+                        ("Platform", item.get("platform")),
+                        ("Matched on", item.get("verified_on")),
+                        ("Relationship", (item.get("classification") or "").replace("_", " ").lower()),
+                        ("Media similarity", _score(item.get("media_score"))),
+                        ("Face similarity", _score(item.get("face_similarity"))
+                                            if item.get("face_similarity") is not None
+                                            else "No comparable face"),
+                        ("Matching media SHA-256", item.get("media_sha256")),
+                        ("Page reports publication", item.get("published_at") or "Not stated"),
+                        ("Earliest archived capture", _archive_stamp(item.get("first_observed"))),
+                        ("Retrieved at", item.get("checked_at")),
+                    ])
+
+        if search.get("interpretation"):
+            para(search["interpretation"], small)
+        if search.get("verification_method"):
+            para(search["verification_method"], small)
+        for text in (search.get("limitations") or []):
+            para(f"• {text}", small)
 
     def not_run(payload: dict | None, module_label: str) -> bool:
         """Print an honest not-run block. Returns True when the section is closed."""
@@ -594,7 +682,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         not_run(metadata, "Metadata extraction")
 
     # 10 ────────────────────────────────────────────────────────────────────
-    section("Content Provenance (C2PA Content Credentials)")
+    section("Content Provenance and Located Sources")
     if provenance:
         keyvalues([
             ("Reader", provenance.get("method") or "c2pa-python"),
@@ -617,6 +705,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                  "media in circulation carries none, so this is expected and is NOT treated as an "
                  "indicator of manipulation. It is excluded from the risk calculation entirely "
                  "rather than counted against the file.", small)
+        _located_sources(provenance.get("external_search") or {})
     else:
         not_run(provenance, "Provenance inspection")
 

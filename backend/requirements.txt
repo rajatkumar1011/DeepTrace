@@ -23,6 +23,15 @@ transformers==4.41.2
 SpeechBrain==1.0.3
 c2pa-python==0.37.5
 
+# Reverse-image provenance search: HTTP calls to the search API and to candidate
+# pages, and HTML parsing of those pages to find the media they serve.
+requests==2.34.2
+beautifulsoup4==4.15.0
+
+# Optional, not installed here: yt-dlp on PATH lets the same module read metadata
+# from platforms that render client-side (Instagram, Facebook, X, YouTube). When
+# it is absent those sources are reported as unverified rather than as cleared.
+
 # Verification tools. Not imported by the running service — they are used by
 # backend/tests and scripts/smoke_e2e.py, and are listed here rather than pinned
 # above so a deployment install does not pull them in:
