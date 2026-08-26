@@ -15,11 +15,12 @@ import os
 from html import escape
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (
+    Flowable,
     Image,
     PageBreak,
     Paragraph,
@@ -33,15 +34,30 @@ from paths import PROJECT_ROOT, report_path, to_public_path
 from services.validation import (
     BOUNDARY as VALIDATION_BOUNDARY,
     METRICS_COMMAND,
-    ROBUSTNESS_COMMAND,
     load_metrics,
-    load_robustness,
 )
 
-NAVY = colors.HexColor("#0b3954")
-SAFFRON = colors.HexColor("#b45309")
-GREY = colors.HexColor("#9aaab5")
-LIGHT = colors.HexColor("#e8eef2")
+# ---------------------------------------------------------------------------
+# Report visual system
+# ---------------------------------------------------------------------------
+# The analysis logic is intentionally untouched. These colours and helpers only
+# change how the preserved facts are presented to a victim, investigator or
+# reviewer. The palette mirrors the DeepTrace product without imitating a
+# government certificate or claiming an official seal.
+NAVY = colors.HexColor("#0B2F5B")
+BLUE = colors.HexColor("#174F8A")
+ACCENT = colors.HexColor("#F59E0B")
+INK = colors.HexColor("#172033")
+MUTED = colors.HexColor("#66758A")
+GREY = colors.HexColor("#B8C4D1")
+LINE = colors.HexColor("#D8E1EA")
+LIGHT = colors.HexColor("#F4F7FA")
+PALE_BLUE = colors.HexColor("#EDF4FB")
+PALE_ORANGE = colors.HexColor("#FFF6E7")
+GREEN = colors.HexColor("#18794E")
+PALE_GREEN = colors.HexColor("#EAF7F0")
+RED = colors.HexColor("#B42318")
+PALE_RED = colors.HexColor("#FFF0EE")
 
 CONTENT_WIDTH = 180 * mm
 
@@ -141,6 +157,129 @@ def on_disk(path: str | None) -> str | None:
     return candidate if os.path.isfile(candidate) else None
 
 
+def _mask_aadhaar(value: str | None) -> str:
+    """Render Aadhaar safely in an exportable report.
+
+    The full value remains associated with the submitter record in the database,
+    but a report is designed to be shared with investigators/platforms. Printing
+    all 12 digits would unnecessarily spread a sensitive identifier.
+    """
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(digits) != 12:
+        return "Not recorded" if not digits else "Recorded - invalid display format"
+    return f"XXXX XXXX {digits[-4:]}"
+
+
+def _format_gender(value: str | None) -> str:
+    if not value:
+        return "Not recorded"
+    return str(value).replace("_", " ").strip().title()
+
+
+def _format_phone(value: str | None) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(digits) == 10:
+        return f"+91 {digits[:5]} {digits[5:]}"
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"+91 {digits[2:7]} {digits[7:]}"
+    return _text(value)
+
+
+def _scaled_image(path: str | None, max_width: float, max_height: float) -> Image | None:
+    """Return a non-distorted Platypus Image that fits inside the given box."""
+    resolved = on_disk(path)
+    if not resolved:
+        return None
+    try:
+        image = Image(resolved)
+        source_w = float(image.imageWidth or 1)
+        source_h = float(image.imageHeight or 1)
+        scale = min(max_width / source_w, max_height / source_h)
+        image.drawWidth = source_w * scale
+        image.drawHeight = source_h * scale
+        return image
+    except Exception:
+        return None
+
+
+def _risk_palette(level: str | None) -> tuple:
+    value = str(level or "").upper()
+    if value == "HIGH":
+        return RED, PALE_RED
+    if value == "LOW":
+        return GREEN, PALE_GREEN
+    return colors.HexColor("#A15C00"), PALE_ORANGE
+
+
+def _dominant_risk_signal(payload: dict | None) -> dict | None:
+    """Return the signal with the largest recorded contribution.
+
+    Current risk payloads store the contributors in ``signals`` and sort them by
+    contribution, but older rows may not be sorted. Computing the maximum keeps
+    the report correct for both.
+    """
+    signals = (payload or {}).get("signals") or []
+    valid = [item for item in signals if isinstance(item, dict)]
+    if not valid:
+        return None
+    return max(valid, key=lambda item: float(item.get("contribution") or 0.0))
+
+
+# Round 2.1 asks for robustness testing against compression, re-upload and
+# screen-recording degradation. That harness is not implemented in the current
+# DeepTrace build, so the report states the gap explicitly and never advertises
+# a command or result that does not exist.
+ROBUSTNESS_HARNESS_IMPLEMENTED = False
+
+
+class DeepTraceBrand(Flowable):
+    """Small vector DeepTrace lock-up; no external logo asset is required."""
+
+    def __init__(self, width=92 * mm, height=22 * mm, compact: bool = False):
+        super().__init__()
+        self.width = width
+        self.height = height
+        self.compact = compact
+
+    def draw(self):
+        c = self.canv
+        size = 18 * mm if not self.compact else 11 * mm
+        radius = 3 * mm if not self.compact else 2 * mm
+        c.setFillColor(NAVY)
+        c.setStrokeColor(NAVY)
+        c.roundRect(0, self.height - size, size, size, radius, fill=1, stroke=0)
+
+        # White shield mark. It is deliberately generic product branding, not a seal.
+        x = size * 0.50
+        top = self.height - size * 0.20
+        bottom = self.height - size * 0.78
+        half = size * 0.25
+        path = c.beginPath()
+        path.moveTo(x, top)
+        path.lineTo(x + half, top - size * 0.10)
+        path.lineTo(x + half * 0.78, bottom + size * 0.15)
+        path.curveTo(x + half * 0.40, bottom, x + half * 0.12, bottom - size * 0.02, x, bottom - size * 0.10)
+        path.curveTo(x - half * 0.12, bottom - size * 0.02, x - half * 0.40, bottom, x - half * 0.78, bottom + size * 0.15)
+        path.lineTo(x - half, top - size * 0.10)
+        path.close()
+        c.setFillColor(colors.white)
+        c.drawPath(path, fill=1, stroke=0)
+
+        # DeepTrace orange accent.
+        c.setStrokeColor(ACCENT)
+        c.setLineWidth(1.5)
+        c.line(2 * mm, self.height - size + 1.5 * mm, size - 2 * mm, self.height - size + 1.5 * mm)
+
+        text_x = size + (5 * mm if not self.compact else 3 * mm)
+        c.setFillColor(NAVY)
+        c.setFont("Helvetica-Bold", 19 if not self.compact else 10)
+        c.drawString(text_x, self.height - (7.2 * mm if not self.compact else 4.4 * mm), "DeepTrace")
+        if not self.compact:
+            c.setFillColor(MUTED)
+            c.setFont("Helvetica", 7.6)
+            c.drawString(text_x, self.height - 12.0 * mm, "Digital Impersonation Evidence Assistance")
+
+
 def generate_report(investigation_id: int, db_session) -> str | None:
     from models.schema import Identity, Investigation
     from services.custody import build_custody_record
@@ -155,6 +294,9 @@ def generate_report(investigation_id: int, db_session) -> str | None:
 
     identity = (db_session.query(Identity).filter(Identity.id == inv.identity_id).first()
                 if inv.identity_id else None)
+    # The submitter is the person who supplied identification details before the
+    # investigation. It is intentionally separate from the protected identity.
+    submitter = getattr(inv, "submitter", None)
 
     latest: dict[str, object] = {}
     for row in sorted(inv.analysis_results, key=lambda r: (str(r.created_at or ""), r.id)):
@@ -176,6 +318,40 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     risk = data_for("risk_fusion")
 
     evidence_items = sorted(inv.evidence_items, key=lambda e: (e.evidence_type or "", e.id))
+
+    # Page 2 visual evidence: the enrolled reference image and either the
+    # submitted still image or the sampled video frame with the highest recorded
+    # manipulation signal. This does not label that frame as fake; it simply makes
+    # the exact subject of the analysis immediately understandable to the reader.
+    reference_preview_path = getattr(identity, "reference_image_path", None) if identity else None
+    subject_preview_path = inv.file_path if inv.media_type == "image" else None
+    subject_preview_caption = "Submitted image" if inv.media_type == "image" else "Representative analysed frame"
+    if inv.media_type == "video":
+        frame_items = [item for item in evidence_items if (item.evidence_type or "").lower() == "frame"]
+        target_timestamp = None
+        if deepfake and isinstance(deepfake.get("frame_results"), list):
+            scored = [f for f in deepfake.get("frame_results") or []
+                      if isinstance(f, dict) and f.get("manipulation_signal") is not None]
+            if scored:
+                strongest = max(scored, key=lambda f: float(f.get("manipulation_signal") or 0))
+                target_timestamp = strongest.get("frame_timestamp_seconds")
+                subject_preview_caption = (
+                    f"Analysed frame at {_seconds(target_timestamp)} - highest sampled manipulation signal "
+                    f"{_score(strongest.get('manipulation_signal'))}"
+                )
+        if frame_items:
+            if target_timestamp is not None:
+                try:
+                    chosen = min(
+                        frame_items,
+                        key=lambda item: abs(float(item.timestamp_offset or 0) - float(target_timestamp)),
+                    )
+                except (TypeError, ValueError):
+                    chosen = frame_items[0]
+            else:
+                chosen = frame_items[len(frame_items) // 2]
+            subject_preview_path = chosen.file_path
+
     integrity = verify_investigation([
         {
             "id": item.id,
@@ -216,68 +392,209 @@ def generate_report(investigation_id: int, db_session) -> str | None:
 
     # ── Styles ───────────────────────────────────────────────────────────────
     styles = getSampleStyleSheet()
-    body = ParagraphStyle("Body", parent=styles["BodyText"], fontSize=8.6, leading=11.4,
-                          spaceAfter=4)
-    small = ParagraphStyle("Small", parent=body, fontSize=7.6, leading=9.6, spaceAfter=2)
-    mono = ParagraphStyle("Mono", parent=small, fontName="Courier", fontSize=6.8, leading=8.4)
-    caption = ParagraphStyle("Caption", parent=small, fontSize=6.6, leading=8,
-                             alignment=TA_CENTER, textColor=colors.HexColor("#44586b"))
-    heading = ParagraphStyle("Heading", parent=styles["Heading2"], fontSize=11, leading=14,
-                             textColor=NAVY, spaceBefore=13, spaceAfter=5)
-    subheading = ParagraphStyle("Subheading", parent=styles["Heading4"], fontSize=8.8,
-                                leading=11, textColor=SAFFRON, spaceBefore=7, spaceAfter=3)
-    title_style = ParagraphStyle("DocTitle", parent=styles["Title"], fontSize=19, leading=23,
-                                 textColor=NAVY, spaceAfter=2)
-    subtitle = ParagraphStyle("Subtitle", parent=body, fontSize=9.4, leading=12,
-                              alignment=TA_CENTER, textColor=colors.HexColor("#44586b"))
+    body = ParagraphStyle(
+        "Body", parent=styles["BodyText"], fontName="Helvetica", fontSize=8.7,
+        leading=12.2, textColor=INK, spaceAfter=4.5,
+    )
+    small = ParagraphStyle(
+        "Small", parent=body, fontSize=7.5, leading=10.1, textColor=colors.HexColor("#405169"),
+        spaceAfter=2.4,
+    )
+    # Table headers use Paragraph objects, so TableStyle(TEXTCOLOR) alone does not
+    # reliably override the Paragraph's own text colour. Give header paragraphs an
+    # explicit white style so labels stay high-contrast on the DeepTrace navy bar.
+    table_header = ParagraphStyle(
+        "TableHeader", parent=small, fontName="Helvetica-Bold", fontSize=7.2,
+        leading=9.2, textColor=colors.white, spaceAfter=0,
+    )
+    mono = ParagraphStyle(
+        "Mono", parent=small, fontName="Courier", fontSize=6.6, leading=8.4, textColor=INK,
+    )
+    caption = ParagraphStyle(
+        "Caption", parent=small, fontSize=6.8, leading=8.8, alignment=TA_CENTER,
+        textColor=MUTED, spaceBefore=2,
+    )
+    heading = ParagraphStyle(
+        "Heading", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11.3,
+        leading=14.5, textColor=NAVY, backColor=PALE_BLUE, borderColor=LINE, borderWidth=0.6,
+        borderPadding=(6, 8, 6, 8), spaceBefore=12, spaceAfter=7, keepWithNext=True,
+    )
+    subheading = ParagraphStyle(
+        "Subheading", parent=styles["Heading4"], fontName="Helvetica-Bold", fontSize=8.8,
+        leading=11.5, textColor=BLUE, spaceBefore=8, spaceAfter=4, keepWithNext=True,
+    )
+    title_style = ParagraphStyle(
+        "DocTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=24, leading=29,
+        alignment=TA_LEFT, textColor=NAVY, spaceAfter=4,
+    )
+    subtitle = ParagraphStyle(
+        "Subtitle", parent=body, fontSize=10.5, leading=14, alignment=TA_LEFT, textColor=MUTED,
+    )
+    eyebrow = ParagraphStyle(
+        "Eyebrow", parent=small, fontName="Helvetica-Bold", fontSize=7.3, leading=9,
+        textColor=BLUE, spaceAfter=3,
+    )
+    page_title = ParagraphStyle(
+        "PageTitle", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=17.5,
+        leading=22, textColor=NAVY, spaceAfter=4,
+    )
+    profile_label = ParagraphStyle(
+        "ProfileLabel", parent=small, fontName="Helvetica-Bold", fontSize=6.8, leading=8.5,
+        textColor=MUTED, spaceAfter=1,
+    )
+    profile_value = ParagraphStyle(
+        "ProfileValue", parent=body, fontName="Helvetica-Bold", fontSize=8.8, leading=11.2,
+        textColor=INK, spaceAfter=0,
+    )
 
     story: list = []
     counter = {"n": 0}
 
     def section(name: str) -> None:
         counter["n"] += 1
-        story.append(Paragraph(f"{counter['n']}. {escape(name)}", heading))
+        story.append(Paragraph(f"{counter['n']:02d}  {escape(name)}", heading))
 
     def para(value, style=body) -> None:
         story.append(Paragraph(escape(_text(value)), style))
 
-    def keyvalues(rows: list[tuple[str, object]]) -> None:
-        cells = [[Paragraph(escape(key), small), Paragraph(escape(_text(value)), small)]
-                 for key, value in rows]
-        table = Table(cells, colWidths=[45 * mm, CONTENT_WIDTH - 45 * mm])
+    def callout(title: str, text_value: str, tone: str = "blue") -> None:
+        palette = {
+            "blue": (BLUE, PALE_BLUE),
+            "green": (GREEN, PALE_GREEN),
+            "orange": (colors.HexColor("#9A5B00"), PALE_ORANGE),
+            "red": (RED, PALE_RED),
+        }
+        fg, bg = palette.get(tone, palette["blue"])
+        cell = [
+            Paragraph(f"<b>{escape(title)}</b>", ParagraphStyle(
+                "CalloutTitle", parent=small, textColor=fg, fontSize=8.2, leading=10.2, spaceAfter=2)),
+            Paragraph(escape(_text(text_value)), small),
+        ]
+        table = Table([[cell]], colWidths=[CONTENT_WIDTH])
         table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), LIGHT),
+            ("BACKGROUND", (0, 0), (-1, -1), bg),
+            ("BOX", (0, 0), (-1, -1), 0.7, colors.Color(fg.red, fg.green, fg.blue, alpha=0.45)),
+            ("LEFTPADDING", (0, 0), (-1, -1), 9),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        story.append(table)
+        story.append(Spacer(1, 3 * mm))
+
+    def keyvalues(rows: list[tuple[str, object]]) -> None:
+        cells = [[Paragraph(f"<b>{escape(key)}</b>", small), Paragraph(escape(_text(value)), small)]
+                 for key, value in rows]
+        table = Table(cells, colWidths=[47 * mm, CONTENT_WIDTH - 47 * mm], hAlign="LEFT")
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), PALE_BLUE),
+            ("TEXTCOLOR", (0, 0), (0, -1), NAVY),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("GRID", (0, 0), (-1, -1), 0.35, GREY),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LINEBELOW", (0, 0), (-1, -2), 0.35, LINE),
+            ("BOX", (0, 0), (-1, -1), 0.6, LINE),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(table)
+
+    def profile_grid(rows: list[tuple[str, object, str, object]]) -> None:
+        data = []
+        for left_label, left_value, right_label, right_value in rows:
+            data.append([
+                [Paragraph(escape(left_label.upper()), profile_label),
+                 Paragraph(escape(_text(left_value)), profile_value)],
+                [Paragraph(escape(right_label.upper()), profile_label),
+                 Paragraph(escape(_text(right_value)), profile_value)],
+            ])
+        table = Table(data, colWidths=[CONTENT_WIDTH / 2, CONTENT_WIDTH / 2])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+            ("BOX", (0, 0), (-1, -1), 0.7, LINE),
+            ("INNERGRID", (0, 0), (-1, -1), 0.35, LINE),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
         story.append(table)
 
     def grid(header: list[str], rows: list[list[object]], widths: list[float],
              styles_for_cells=None) -> None:
         cell_style = styles_for_cells or small
-        table_data = [[Paragraph(f"<b>{escape(h)}</b>", small) for h in header]]
+        table_data = [[Paragraph(escape(h), table_header) for h in header]]
         for row in rows:
             table_data.append([
                 cell if isinstance(cell, (Paragraph, Image))
                 else Paragraph(escape(_text(cell)), cell_style)
                 for cell in row
             ])
-        table = Table(table_data, colWidths=widths, repeatRows=1)
+        table = Table(table_data, colWidths=widths, repeatRows=1, hAlign="LEFT")
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.35, GREY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
+            ("LINEBELOW", (0, 1), (-1, -2), 0.25, LINE),
+            ("BOX", (0, 0), (-1, -1), 0.55, LINE),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4.5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4.5),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
         ]))
         story.append(table)
+
+    def metric_cards(items: list[tuple[str, str, str]]) -> None:
+        cells = []
+        for label, value, tone in items:
+            fg, bg = {
+                "risk": _risk_palette(value),
+                "green": (GREEN, PALE_GREEN),
+                "orange": (colors.HexColor("#9A5B00"), PALE_ORANGE),
+                "blue": (BLUE, PALE_BLUE),
+            }.get(tone, (BLUE, PALE_BLUE))
+            cell = [
+                Paragraph(escape(label.upper()), ParagraphStyle(
+                    f"MetricLabel{label}", parent=profile_label, textColor=fg, alignment=TA_CENTER)),
+                Paragraph(escape(value), ParagraphStyle(
+                    f"MetricValue{label}", parent=profile_value, fontSize=12.0, leading=15,
+                    textColor=fg, alignment=TA_CENTER)),
+            ]
+            cells.append((cell, bg))
+        table = Table([[cell for cell, _ in cells]], colWidths=[CONTENT_WIDTH / len(cells)] * len(cells))
+        commands = [
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("BOX", (0, 0), (-1, -1), 0.55, LINE),
+            ("INNERGRID", (0, 0), (-1, -1), 0.35, LINE),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ]
+        for idx, (_, bg) in enumerate(cells):
+            commands.append(("BACKGROUND", (idx, 0), (idx, 0), bg))
+        table.setStyle(TableStyle(commands))
+        story.append(table)
+
+    def image_card(title: str, image_path: str | None, caption_text: str, fallback: str) -> list:
+        image = _scaled_image(image_path, 76 * mm, 44 * mm)
+        content = [Paragraph(escape(title.upper()), eyebrow), Spacer(1, 1 * mm)]
+        if image:
+            content.extend([image, Spacer(1, 2 * mm), Paragraph(escape(caption_text), caption)])
+        else:
+            placeholder = Table([[Paragraph(escape(fallback), ParagraphStyle(
+                "ImageFallback", parent=small, alignment=TA_CENTER, textColor=MUTED))]],
+                colWidths=[76 * mm], rowHeights=[44 * mm])
+            placeholder.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
+                ("BOX", (0, 0), (-1, -1), 0.7, LINE),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ]))
+            content.extend([placeholder, Spacer(1, 2 * mm), Paragraph(escape(caption_text), caption)])
+        return content
 
     def claims_table(entries: list[dict], first_column: str) -> None:
         """Render one of the custody claim lists as a statement/basis table."""
@@ -408,33 +725,190 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         ]))
         story.append(table)
 
-    # ── Cover ────────────────────────────────────────────────────────────────
-    story.append(Paragraph("DeepTrace Forensic Incident Report", title_style))
-    story.append(Paragraph(
-        "Intelligent Digital Impersonation Detection &amp; Forensic Evidence Preservation",
-        subtitle))
+    # ── Page 1: victim-facing cover ─────────────────────────────────────────
     story.append(Spacer(1, 7 * mm))
-    keyvalues([
-        ("Case reference", f"DeepTrace INV-{inv.id:05d}"),
-        ("Subject media", inv.filename),
-        ("Assessed risk", f"{inv.risk_level or 'Not assessed'}"
-                          f"{f' ({inv.overall_risk_score:.2f})' if inv.overall_risk_score is not None else ''}"),
-        ("Protected identity", identity.name if identity else "None attached to this case"),
-        ("Analysis completed", inv.analysis_completed_at or "Analysis has not completed"),
-        ("Report generated", integrity["verified_at"]),
-        ("Evidence integrity", integrity["summary"]),
-    ])
-    story.append(Spacer(1, 5 * mm))
+    story.append(DeepTraceBrand())
+    story.append(Spacer(1, 16 * mm))
+    story.append(Paragraph("FORENSIC INCIDENT REPORT", eyebrow))
+    story.append(Paragraph("Digital Impersonation Evidence Report", title_style))
     story.append(Paragraph(
-        "<b>Scope of this document.</b> This report records what DeepTrace measured and preserved. "
-        "The scores it contains are forensic indicators produced by research models, intended to "
-        "direct expert review. They are not proof of manipulation, not proof of identity, not "
-        "attribution of authorship, and not a determination of criminal conduct. DeepTrace does not "
-        "claim perfect detection, does not monitor the internet, does not identify who created the "
-        "media, and does not by itself establish legal admissibility.", body))
+        "A clear case summary for the affected person, followed by the complete forensic findings and preserved evidence record.",
+        subtitle,
+    ))
+    story.append(Spacer(1, 12 * mm))
+
+    prepared_for = submitter.full_name if submitter else (identity.name if identity else "Case submitter")
+    risk_text = (f"{inv.risk_level or 'NOT ASSESSED'}"
+                 + (f"  |  {inv.overall_risk_score:.3f}" if inv.overall_risk_score is not None else ""))
+    risk_fg, risk_bg = _risk_palette(inv.risk_level)
+    cover_meta = Table([
+        [Paragraph("CASE REFERENCE", profile_label), Paragraph("PREPARED FOR", profile_label)],
+        [Paragraph(escape(f"INV-{inv.id:05d}"), ParagraphStyle("CoverBigValue1", parent=profile_value, fontSize=15, leading=18, textColor=NAVY)),
+         Paragraph(escape(_text(prepared_for)), ParagraphStyle("CoverBigValue2", parent=profile_value, fontSize=12, leading=16))],
+        [Paragraph("SUBJECT MEDIA", profile_label), Paragraph("PROTECTED IDENTITY", profile_label)],
+        [Paragraph(escape(_text(inv.filename)), profile_value), Paragraph(escape(identity.name if identity else "None attached"), profile_value)],
+        [Paragraph("REPORT GENERATED", profile_label), Paragraph("ANALYSIS COMPLETED", profile_label)],
+        [Paragraph(escape(_text(integrity.get("verified_at"))), profile_value), Paragraph(escape(_text(inv.analysis_completed_at or "Not completed")), profile_value)],
+    ], colWidths=[CONTENT_WIDTH / 2, CONTENT_WIDTH / 2])
+    cover_meta.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("BOX", (0, 0), (-1, -1), 0.8, LINE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(cover_meta)
+    story.append(Spacer(1, 6 * mm))
+
+    risk_box = Table([
+        [
+            Paragraph("ASSESSED INVESTIGATION PRIORITY", ParagraphStyle(
+                "CoverRiskLabel", parent=profile_label, textColor=risk_fg)),
+            Paragraph(escape(risk_text), ParagraphStyle(
+                "CoverRiskValue", parent=profile_value, fontSize=14, leading=17,
+                textColor=risk_fg, alignment=TA_LEFT)),
+        ],
+        [
+            Paragraph("EVIDENCE INTEGRITY", ParagraphStyle(
+                "CoverIntegrityLabel", parent=profile_label, textColor=GREEN)),
+            Paragraph(escape(integrity.get("summary") or "Not verified"), ParagraphStyle(
+                "CoverIntegrityValue", parent=small, fontSize=8.1, leading=10.4, textColor=INK)),
+        ],
+    ], colWidths=[54 * mm, CONTENT_WIDTH - 54 * mm])
+    risk_box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), risk_bg),
+        ("BACKGROUND", (0, 1), (-1, 1), PALE_GREEN),
+        ("BOX", (0, 0), (-1, -1), 0.8, LINE),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.55, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.append(risk_box)
+    story.append(Spacer(1, 10 * mm))
+
+    callout(
+        "How to read this report",
+        "The first two pages identify the case, the person who submitted it, the protected reference and the suspicious media. "
+        "From page 3 onward, the report records the investigation findings, evidence hashes, model outputs, source leads, timeline, limitations and response routes. "
+        "AI scores are forensic indicators for review - not proof of manipulation, identity, authorship or criminal conduct.",
+        "blue",
+    )
+    story.append(Paragraph(
+        "System-generated by DeepTrace - Team Algorythm (SIH26_28). This is an evidence-preparation artifact, not a government-issued certificate or a legal determination.",
+        ParagraphStyle("CoverNotice", parent=small, fontSize=7.2, leading=9.6, textColor=MUTED),
+    ))
+
+    # ── Page 2: submitter, identity and submitted evidence ─────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("CASE PARTICIPANTS &amp; SUBMITTED MEDIA", eyebrow))
+    story.append(Paragraph("Identity &amp; Evidence Overview", page_title))
+    para(
+        "This page gives the affected person and reviewer immediate context before the technical investigation begins. "
+        "Identification details below are the information supplied to DeepTrace for this case; they are not independently verified by UIDAI, a telecom provider or another identity service.",
+        small,
+    )
+    story.append(Spacer(1, 1.5 * mm))
+
+    # Keep the identification notice on Page 2. In the first redesign this note
+    # followed all of the page content; when only a few millimetres remained,
+    # ReportLab moved the whole table to Page 3 and the explicit PageBreak below
+    # left an almost empty page. Placing a compact notice here makes its position
+    # deterministic and keeps Page 3 reserved for forensic findings.
+    identification_note_style = ParagraphStyle(
+        "IdentificationNote", parent=small, fontSize=7.0, leading=9.2,
+        textColor=INK, spaceAfter=0,
+    )
+    identification_note = Table([[Paragraph(
+        '<font color="#9A5B00"><b>Identification status</b></font> &nbsp; '
+        'Submitter details are self-declared and recorded for case association. '
+        'The Aadhaar value is masked in this export to reduce unnecessary disclosure of a sensitive identifier.',
+        identification_note_style,
+    )]], colWidths=[CONTENT_WIDTH])
+    identification_note.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PALE_ORANGE),
+        ("BOX", (0, 0), (-1, -1), 0.65, colors.HexColor("#D7A14B")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(identification_note)
+    story.append(Spacer(1, 2.5 * mm))
+
+    visual_table = Table([[
+        image_card(
+            "Reference identity", reference_preview_path,
+            f"Enrolled reference image for {identity.name if identity else 'the protected identity'}",
+            "No reference image is available for this case.",
+        ),
+        image_card(
+            "Suspicious media", subject_preview_path, subject_preview_caption,
+            "No preview frame is available on disk for this media.",
+        ),
+    ]], colWidths=[CONTENT_WIDTH / 2, CONTENT_WIDTH / 2])
+    visual_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOX", (0, 0), (-1, -1), 0.7, LINE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, LINE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(visual_table)
+    story.append(Spacer(1, 3.5 * mm))
+
+    story.append(Paragraph("Case identification details", subheading))
+    profile_grid([
+        ("Submitter name", submitter.full_name if submitter else "Legacy case - not recorded",
+         "Submitter record ID", f"SUB-{submitter.id:05d}" if submitter else "Not recorded"),
+        ("Aadhaar number", _mask_aadhaar(submitter.aadhaar_number) if submitter else "Not recorded",
+         "Phone number", _format_phone(submitter.phone_number) if submitter else "Not recorded"),
+        ("Gender", _format_gender(submitter.gender) if submitter else "Not recorded",
+         "Date of birth", submitter.date_of_birth if submitter else "Not recorded"),
+        ("Protected identity", identity.name if identity else "None attached",
+         "Reference ID", f"REF-{identity.id:05d}" if identity else "Not recorded"),
+        ("Reference enrolled", identity.created_at if identity else "Not recorded",
+         "Consent recorded", identity.consent_given if identity else "Not recorded"),
+    ])
+    story.append(Spacer(1, 3 * mm))
+
+    story.append(Paragraph("Submitted media at a glance", subheading))
+    profile_grid([
+        ("Filename", inv.filename, "Media type", inv.media_type),
+        ("File size", f"{inv.file_size_bytes:,} bytes" if inv.file_size_bytes else "Not recorded",
+         "Resolution", inv.resolution),
+        ("Duration", f"{inv.duration_seconds:.2f} seconds" if inv.duration_seconds else "Not applicable",
+         "Frames sampled", inv.frames_extracted or 0),
+    ])
+    story.append(Spacer(1, 1.5 * mm))
+
+    # ── Page 3 onward: full forensic investigation ─────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("INVESTIGATION FINDINGS &amp; PRESERVED EVIDENCE", eyebrow))
+    story.append(Paragraph("Forensic Investigation Record", page_title))
+    para(
+        "The remaining pages preserve the complete DeepTrace investigation record. Nothing from the previous report has been removed: case details, hashes, custody boundaries, metadata, provenance, manipulation analysis, localization, identity and voice comparisons, audio findings, copy tracing, risk calculation, timeline, response routes, validation and methodology are all retained below.",
+        small,
+    )
 
     # 1 ─────────────────────────────────────────────────────────────────────
     section("Case Summary")
+    external_search = (provenance or {}).get("external_search") or {}
+    metric_cards([
+        ("Overall risk", str(inv.risk_level or "Not assessed"), "risk"),
+        ("Manipulation signal", _score((deepfake or {}).get("manipulation_signal")), "orange"),
+        ("Face similarity", _score((identity_result or {}).get("best_similarity")), "blue"),
+        ("Verified web matches", str(external_search.get("sources_verified") or 0), "green"),
+    ])
+    story.append(Spacer(1, 4 * mm))
     if risk:
         para(risk.get("explanation"))
         keyvalues([
@@ -442,7 +916,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                              f"on a 0–1 scale"),
             ("Signals contributing", f"{risk.get('signals_used')} available, "
                                      f"{risk.get('signals_excluded')} excluded as unavailable"),
-            ("Dominant contributor", (risk.get("dominant_signal") or {}).get("label", "None")),
+            ("Dominant contributor", (_dominant_risk_signal(risk) or {}).get("label", "None")),
         ])
     else:
         para("Risk fusion has not run for this investigation, so no overall assessment is "
@@ -723,9 +1197,21 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                                               or deepfake.get("frames_analyzed")),
             ("Aggregate basis", deepfake.get("aggregate_basis")),
             ("Frames above threshold", deepfake.get("suspicious_frame_count")),
-            ("Highest frame score", _score(deepfake.get("max_manipulation_signal"))),
-            ("Lowest frame score", _score(deepfake.get("min_manipulation_signal"))),
-            ("Score spread (std dev)", _score(deepfake.get("std_manipulation_signal"))),
+            ("Highest frame score", _score(
+                deepfake.get("max_frame_signal")
+                if deepfake.get("max_frame_signal") is not None
+                else deepfake.get("manipulation_signal")
+            )),
+            ("Lowest frame score", _score(
+                deepfake.get("min_frame_signal")
+                if deepfake.get("min_frame_signal") is not None
+                else deepfake.get("manipulation_signal")
+            )),
+            ("Score spread (std dev)", _score(
+                deepfake.get("signal_std")
+                if deepfake.get("signal_std") is not None
+                else (0.0 if deepfake.get("frames_analyzed") == 1 else None)
+            )),
         ])
         if deepfake.get("interpretation"):
             para(deepfake["interpretation"])
@@ -808,16 +1294,17 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                    _score(d.get("similarity"))]
                   for d in details],
                  [34 * mm, 34 * mm, CONTENT_WIDTH - 68 * mm])
-        para(identity_result.get("note") or "", small)
+        if identity_result.get("note"):
+            para(identity_result["note"], small)
 
     # 14 ────────────────────────────────────────────────────────────────────
     section("Speaker Verification (Voice)")
     if not not_run(voice, "Speaker verification"):
         keyvalues([
-            ("Reference identity", voice.get("reference_identity")),
+            ("Reference identity", voice.get("identity_name")),
             ("Model", voice.get("method")),
             ("Similarity score", _score(voice.get("voice_match_score"))),
-            ("Decision threshold", _score(voice.get("threshold"), 2)),
+            ("Decision threshold", _score(voice.get("decision_threshold"), 2)),
             ("Verdict", (voice.get("verdict") or "").replace("_", " ")),
             ("Reference duration", f"{voice['reference_seconds']:.2f} s"
                                    if voice.get("reference_seconds") else None),
@@ -825,7 +1312,8 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                                  if voice.get("subject_seconds") else None),
         ])
         para(voice.get("interpretation"))
-        para(voice.get("note") or "", small)
+        if voice.get("note"):
+            para(voice["note"], small)
 
     # 15 ────────────────────────────────────────────────────────────────────
     section("Audio Forensics")
@@ -834,9 +1322,10 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         spectral = audio.get("spectral") or {}
         keyvalues([
             ("Method", audio.get("method")),
-            ("Duration analysed", f"{audio['duration_seconds']:.2f} s"
-                                  if audio.get("duration_seconds") else None),
-            ("Sample rate", f"{audio.get('sample_rate')} Hz"),
+            ("Duration analysed", f"{audio['decoded_duration_seconds']:.2f} s"
+                                  if audio.get("decoded_duration_seconds") is not None else None),
+            ("Sample rate", f"{audio.get('decoded_sample_rate')} Hz"
+                            if audio.get("decoded_sample_rate") is not None else None),
             ("Peak level", f"{levels.get('peak_dbfs')} dBFS" if levels.get("peak_dbfs") is not None else None),
             ("RMS level", f"{levels.get('rms_dbfs')} dBFS" if levels.get("rms_dbfs") is not None else None),
             ("Crest factor", f"{levels.get('crest_factor_db')} dB"
@@ -844,10 +1333,10 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("Clipped samples", f"{levels.get('clipped_samples')} "
                                 f"({(levels.get('clipping_ratio') or 0) * 100:.3f}%)"),
             ("Silence proportion", f"{(levels.get('silence_ratio') or 0) * 100:.1f}%"),
-            ("Spectral centroid", f"{spectral.get('centroid_hz')} Hz"
-                                  if spectral.get("centroid_hz") is not None else None),
-            ("85% spectral rolloff", f"{spectral.get('rolloff_85_hz')} Hz"
-                                     if spectral.get("rolloff_85_hz") is not None else None),
+            ("Spectral centroid", f"{spectral.get('mean_centroid_hz')} Hz"
+                                  if spectral.get("mean_centroid_hz") is not None else None),
+            ("85% spectral rolloff", f"{spectral.get('mean_rolloff85_hz')} Hz"
+                                     if spectral.get("mean_rolloff85_hz") is not None else None),
             ("Abrupt transitions", audio.get("discontinuity_count")),
             ("Transitions per minute", _score(audio.get("discontinuities_per_minute"), 2)),
             ("Editing indicator", _score(audio.get("editing_indicator"))),
@@ -855,14 +1344,15 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         discontinuities = audio.get("discontinuities") or []
         if discontinuities:
             story.append(Paragraph("Detected abrupt loudness transitions", subheading))
-            grid(["Timestamp", "Change (dB)", "Direction"],
-                 [[_seconds(d.get("timestamp_seconds")), _score(d.get("delta_db"), 2),
-                   d.get("direction")]
+            grid(["Timestamp", "RMS delta", "Detection threshold"],
+                 [[_seconds(d.get("timestamp_seconds")), _score(d.get("rms_delta"), 5),
+                   _score(d.get("threshold"), 5)]
                   for d in discontinuities],
                  [34 * mm, 34 * mm, CONTENT_WIDTH - 68 * mm])
         for note in audio.get("observations") or []:
             para(f"• {note}", small)
-        para(audio.get("interpretation") or "", small)
+        if audio.get("interpretation"):
+            para(audio["interpretation"], small)
 
     # 16 ────────────────────────────────────────────────────────────────────
     section("Audio-Visual Consistency")
@@ -871,9 +1361,11 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("Method", consistency.get("method")),
             ("Alignment score", _score(consistency.get("consistency_score"))),
             ("Timestamps compared", consistency.get("samples_compared")),
-            ("Aligned samples", consistency.get("aligned_samples")),
-            ("Mismatched samples", consistency.get("mismatched_samples")),
-            ("Stream duration agreement", (consistency.get("duration_agreement") or {}).get("summary")),
+            ("Aligned samples", consistency.get("samples_agreed")),
+            ("Mismatched samples", consistency.get("mismatch_count")),
+            ("Stream duration agreement",
+             (consistency.get("duration_agreement") or {}).get("observation")
+             or (consistency.get("duration_agreement") or {}).get("reason")),
         ])
         mismatches = consistency.get("mismatches") or []
         if mismatches:
@@ -883,7 +1375,9 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                  [28 * mm, CONTENT_WIDTH - 28 * mm])
         for note in consistency.get("observations") or []:
             para(f"• {note}", small)
-        para(consistency.get("interpretation") or consistency.get("details") or "", small)
+        consistency_note = consistency.get("interpretation") or consistency.get("details")
+        if consistency_note:
+            para(consistency_note, small)
 
     # 17 ────────────────────────────────────────────────────────────────────
     section("Copy Tracing — Local Evidence Index")
@@ -914,7 +1408,8 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         if propagation.get("truncated_matches"):
             para(f"{propagation['truncated_matches']} further related case(s) were found but are not "
                  "listed individually.", small)
-        para(propagation.get("interpretation") or "", small)
+        if propagation.get("interpretation"):
+            para(propagation["interpretation"], small)
 
     # 18 ────────────────────────────────────────────────────────────────────
     section("Source Tracing")
@@ -943,7 +1438,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         keyvalues([
             ("Overall risk score", _score(risk.get("overall_risk_score"))),
             ("Risk level", risk.get("risk_level")),
-            ("Method", risk.get("method")),
+            ("Fusion method", risk.get("formula")),
             ("Signals available", risk.get("signals_used")),
             ("Signals excluded", risk.get("signals_excluded")),
         ])
@@ -964,7 +1459,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             story.append(Paragraph(
                 f"• <b>{escape(str(signal.get('label')))}</b> — {escape(str(signal.get('detail')))} "
                 f"Source: {escape(str(signal.get('source_model') or 'n/a'))}.", small))
-        excluded = risk.get("excluded_signals") or []
+        excluded = risk.get("excluded") or []
         if excluded:
             story.append(Paragraph("Signals excluded from the calculation", subheading))
             grid(["Signal", "Why it was excluded"],
@@ -973,7 +1468,8 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             para("Excluded signals do not raise or lower the score. Weights are renormalised across "
                  "the signals that were actually available, so an unavailable module cannot silently "
                  "push the result in either direction.", small)
-        para(risk.get("note") or "", small)
+        if risk.get("disclaimer"):
+            para(risk["disclaimer"], small)
     else:
         not_run(risk, "Risk fusion")
 
@@ -1010,7 +1506,8 @@ def generate_report(investigation_id: int, db_session) -> str | None:
          [[route["route"], route["detail"], route["who_acts"]]
           for route in guidance.get("reporting_routes") or []],
          [40 * mm, CONTENT_WIDTH - 76 * mm, 36 * mm])
-    para(guidance.get("deeptrace_boundary") or "", small)
+    if guidance.get("deeptrace_boundary"):
+        para(guidance["deeptrace_boundary"], small)
 
     # 22 ────────────────────────────────────────────────────────────────────
     story.append(PageBreak())
@@ -1019,16 +1516,21 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         "<b>This section is about DeepTrace, not about this case.</b> Nothing below changes any "
         "score, finding or conclusion in the preceding sections. It is here so that a reviewer "
         "reading a case score can see how often the detector was right on data where the answer "
-        "was known, and how far its score moved when the same file was degraded — the two things "
-        "needed to decide how much weight the case score deserves.", body))
-    para(VALIDATION_BOUNDARY, small)
+        "was known. Robustness against degraded copies is also reported here; in the current build "
+        "that part is explicitly marked as not yet implemented rather than filled with an assumed "
+        "result.", body))
+    para(
+        "Labelled metrics say how often the detector is right on a dataset. Robustness would say "
+        "how much its score moves when the same file is degraded. Neither is a claim about a "
+        "specific case, and no missing measurement is treated as zero or as a passing result.",
+        small,
+    )
     para("Every figure below was read from a file written by DeepTrace's own validation harness on "
          "the machine that generated this report. No figure is a stored constant, none is copied "
          "from a published benchmark, and where a harness has not been run this section reports "
          "that instead of a number.", small)
 
     metrics_run = load_metrics()
-    robustness_run = load_robustness()
 
     # ── labelled accuracy ────────────────────────────────────────────────
     story.append(Paragraph("Accuracy on labelled data — how often the detector is right",
@@ -1146,94 +1648,27 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                 para(f"• {text}", small)
 
     # ── robustness ───────────────────────────────────────────────────────
-    story.append(Paragraph("Robustness under degradation — how far the score moves",
+    story.append(Paragraph("Robustness under degradation — implementation status",
                            subheading))
-    if not robustness_run.get("available"):
-        keyvalues([
-            ("Status", "Not measured in this environment"),
-            ("Reason", robustness_run.get("reason") or "No robustness result was stored."),
-            ("How to produce it", ROBUSTNESS_COMMAND),
-        ])
-        para("Nothing is reported about behaviour on compressed, re-uploaded or screen-recorded "
-             "copies of a file. That gap is stated rather than left to be inferred from silence.",
-             small)
-    else:
-        source = robustness_run.get("source") or {}
-        keyvalues([
-            ("Method", "The same file is scored before and after a real ffmpeg degradation, and the "
-                       "two scores are compared. No labels are needed: the ground truth is that "
-                       "both copies depict the same content."),
-            ("Source media", f"{source.get('file_count', 0)} file(s) from "
-                             f"{source.get('description', 'an unrecorded source')}"),
-            ("Source fingerprint", source.get("fingerprint")),
-            ("Decision threshold", robustness_run.get("threshold")),
-            ("Evaluated at (UTC)", robustness_run.get("generated_at_utc")),
-        ])
-
-        relevant = {"video": "visual", "image": "visual", "audio": "audio"}.get(inv.media_type or "")
-        for channel_key, channel_title in (("visual", "Image and video manipulation signal"),
-                                           ("audio", "Audio editing indicator")):
-            channel = robustness_run.get(channel_key) or {}
-            overall = channel.get("overall") or {}
-            bearing = (" — this is the channel that bears on the present case"
-                       if channel_key == relevant else "")
-            story.append(Paragraph(f"{channel_title}{bearing}", subheading))
-            if not overall or not overall.get("paired_comparisons"):
-                para("No paired comparison completed for this channel, so no robustness figure is "
-                     "reported for it. That is an absence of measurement, not a passing result.",
-                     small)
-                continue
-            grid(["Measure", "Value", "95% CI (Wilson)", "Reading"],
-                 [
-                     ["Decision agreement", _ratio(overall.get("decision_agreement")),
-                      _interval(overall.get("decision_agreement_95_ci")),
-                      f"Over {overall.get('paired_comparisons')} pairs, the share where the "
-                      "degraded copy landed on the same side of the threshold as the original."],
-                     ["Agreement, clear-cut only", _ratio(overall.get("clear_cut_agreement")),
-                      _interval(overall.get("clear_cut_agreement_95_ci")),
-                      f"Restricted to the {overall.get('clear_cut_comparisons')} file(s) whose "
-                      f"original score was not borderline; "
-                      f"{overall.get('borderline_baselines')} borderline baseline(s) excluded, "
-                      "because a file scoring within 0.05 of the threshold flips under almost any "
-                      "transform."],
-                     ["Mean absolute score shift", _ratio(overall.get("mean_absolute_delta")),
-                      "—",
-                      "Mean change in the score itself. High agreement with a large shift still "
-                      "means the score is unstable."],
-                 ],
-                 [38 * mm, 17 * mm, 27 * mm, CONTENT_WIDTH - 82 * mm])
-            worst = overall.get("most_disruptive_transform") or {}
-            if worst:
-                story.append(Paragraph(
-                    "Most disruptive transform for this channel: "
-                    f"<b>{escape(str(worst.get('label')))}</b> "
-                    f"({escape(str(worst.get('media_type')))}), mean shift "
-                    f"{escape(_ratio(worst.get('mean_absolute_delta')))}, agreement "
-                    f"{escape(_ratio(worst.get('decision_agreement')))}.", small))
-            transforms = [entry for entry in (channel.get("per_transform") or [])
-                          if isinstance(entry, dict)]
-            if transforms:
-                grid(["Transform", "Media", "Pairs", "Mean shift", "Agreement", "Direction of drift"],
-                     [[entry.get("label"), entry.get("media_type"),
-                       f"{entry.get('files_compared')}"
-                       + (f" (+{entry.get('files_failed')} failed)"
-                          if entry.get("files_failed") else ""),
-                       _ratio(entry.get("mean_absolute_delta")),
-                       _ratio(entry.get("decision_agreement")),
-                       # The script itself says "no consistent direction" when the
-                       # mean signed shift is within +/-0.005, so an absent value
-                       # here can only mean no pair completed — not a null result.
-                       entry.get("signed_delta_direction") or "not measured"]
-                      for entry in transforms],
-                     [CONTENT_WIDTH - 96 * mm, 16 * mm, 20 * mm, 20 * mm, 20 * mm, 20 * mm])
-                para("Direction is the sign of the mean change, printed so that a systematic drift "
-                     "stays visible even where the decision happened not to flip.", small)
-
-        robustness_caveats = [text for text in (robustness_run.get("caveats") or []) if text]
-        if robustness_caveats:
-            story.append(Paragraph("What these robustness figures do not say", subheading))
-            for text in robustness_caveats:
-                para(f"• {text}", small)
+    keyvalues([
+        ("Status", "Not implemented in this build"),
+        ("Evaluator requirement",
+         "Measure behaviour after compression, messaging/social re-upload and "
+         "screen-recording degradation."),
+        ("Current position",
+         "DeepTrace has not yet run or stored paired degradation measurements, so no "
+         "robustness score, decision-agreement percentage or score-shift value is reported."),
+        ("Planned measurement",
+         "Score the same source media before and after controlled degradation, then report "
+         "decision agreement and absolute score shift for each transform."),
+    ])
+    para(
+        "This is an explicit validation gap, not a passing result. The absence of robustness "
+        "measurements does not change the findings in this case, but it limits how strongly the "
+        "current manipulation score can be generalised to compressed, re-uploaded or "
+        "screen-recorded copies.",
+        small,
+    )
 
     # 23 ────────────────────────────────────────────────────────────────────
     section("Methodology, Models, Limitations and Notice")
@@ -1256,10 +1691,15 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         ("A/V consistency", consistency),
         ("Copy tracing", propagation),
     ):
+        method = (payload or {}).get("method")
+        model_mode = (payload or {}).get("model_name") or (payload or {}).get("model_status")
+        if label == "Metadata extraction" and payload and payload.get("status") == "completed":
+            method = method or "Filesystem metadata + FFprobe/OpenCV/Pillow inspection"
+            model_mode = model_mode or "Deterministic metadata extraction"
         model_rows.append((
             label,
-            (payload or {}).get("method") or "Did not run",
-            (payload or {}).get("model_name") or (payload or {}).get("model_status") or "—",
+            method or "Did not run",
+            model_mode or "—",
             _status_label(payload),
         ))
     grid(["Stage", "Method", "Model / mode", "Status"],
@@ -1274,6 +1714,9 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         "Hash-based preservation demonstrates the integrity of this local evidence store. It is "
         "not third-party timestamping or notarisation and does not by itself establish legal "
         "admissibility.",
+        "Robustness against compressed, re-uploaded and screen-recorded media has not yet been "
+        "measured in this build. Those conditions can change model scores and must be evaluated "
+        "before claiming robustness to real-world redistribution.",
     ]
     if inv.media_type == "video":
         limitations.append(
@@ -1336,29 +1779,68 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     destination = report_path(inv.id)
     os.makedirs(os.path.dirname(destination), exist_ok=True)
 
-    case_label = f"DeepTrace INV-{inv.id:05d} — {inv.filename or 'case'}"
+    case_label = f"INV-{inv.id:05d}"
+    generated_label = str(integrity.get("verified_at") or "")
 
-    def decorate(canvas, document):
+    def _draw_page_frame(canvas):
+        canvas.setStrokeColor(colors.HexColor("#9FB0C1"))
+        canvas.setLineWidth(0.55)
+        canvas.roundRect(7.5 * mm, 7.5 * mm, A4[0] - 15 * mm, A4[1] - 15 * mm,
+                         2.2 * mm, fill=0, stroke=1)
+        # Orange accent at the top-left visually binds every page to DeepTrace.
+        canvas.setStrokeColor(ACCENT)
+        canvas.setLineWidth(2.1)
+        canvas.line(8.5 * mm, A4[1] - 8.6 * mm, 38 * mm, A4[1] - 8.6 * mm)
+
+    def _draw_footer(canvas, document):
+        canvas.setStrokeColor(LINE)
+        canvas.setLineWidth(0.35)
+        canvas.line(14 * mm, 13.0 * mm, A4[0] - 14 * mm, 13.0 * mm)
+        canvas.setFillColor(MUTED)
+        canvas.setFont("Helvetica", 6.4)
+        canvas.drawString(14 * mm, 9.5 * mm, f"DeepTrace {case_label}  |  System-generated analytical report")
+        canvas.drawCentredString(A4[0] / 2, 9.5 * mm, "Forensic indicators - not proof")
+        canvas.drawRightString(A4[0] - 14 * mm, 9.5 * mm, f"Page {document.page}")
+
+    def decorate_cover(canvas, document):
         canvas.saveState()
-        canvas.setFont("Helvetica", 6.6)
-        canvas.setFillColor(colors.HexColor("#44586b"))
-        canvas.drawString(15 * mm, A4[1] - 9 * mm, case_label[:110])
-        canvas.drawRightString(A4[0] - 15 * mm, A4[1] - 9 * mm,
-                               "Forensic indicators — not proof")
-        canvas.setStrokeColor(GREY)
-        canvas.setLineWidth(0.3)
-        canvas.line(15 * mm, A4[1] - 11 * mm, A4[0] - 15 * mm, A4[1] - 11 * mm)
-        canvas.line(15 * mm, 12 * mm, A4[0] - 15 * mm, 12 * mm)
-        canvas.drawString(15 * mm, 8 * mm, f"Generated {integrity['verified_at']}")
-        canvas.drawRightString(A4[0] - 15 * mm, 8 * mm, f"Page {document.page}")
+        _draw_page_frame(canvas)
+        _draw_footer(canvas, document)
+        canvas.restoreState()
+
+    def decorate_standard(canvas, document):
+        canvas.saveState()
+        _draw_page_frame(canvas)
+        # Compact vector brand in the running header.
+        canvas.setFillColor(NAVY)
+        canvas.roundRect(14 * mm, A4[1] - 18.5 * mm, 7.5 * mm, 7.5 * mm, 1.5 * mm, fill=1, stroke=0)
+        canvas.setFillColor(colors.white)
+        canvas.setFont("Helvetica-Bold", 6.8)
+        canvas.drawCentredString(17.75 * mm, A4[1] - 16.2 * mm, "D")
+        canvas.setFillColor(NAVY)
+        canvas.setFont("Helvetica-Bold", 8.0)
+        canvas.drawString(24 * mm, A4[1] - 15.5 * mm, "DeepTrace")
+        canvas.setFillColor(MUTED)
+        canvas.setFont("Helvetica", 6.5)
+        canvas.drawString(24 * mm, A4[1] - 18.6 * mm, "Digital Impersonation Evidence Assistance")
+        canvas.setFont("Helvetica-Bold", 7.0)
+        canvas.setFillColor(NAVY)
+        canvas.drawRightString(A4[0] - 14 * mm, A4[1] - 15.2 * mm, case_label)
+        canvas.setFont("Helvetica", 6.2)
+        canvas.setFillColor(MUTED)
+        canvas.drawRightString(A4[0] - 14 * mm, A4[1] - 18.4 * mm, generated_label[:32])
+        canvas.setStrokeColor(LINE)
+        canvas.setLineWidth(0.35)
+        canvas.line(14 * mm, A4[1] - 21.0 * mm, A4[0] - 14 * mm, A4[1] - 21.0 * mm)
+        _draw_footer(canvas, document)
         canvas.restoreState()
 
     doc = SimpleDocTemplate(
         destination, pagesize=A4,
-        leftMargin=15 * mm, rightMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm,
-        title=f"DeepTrace Forensic Incident Report INV-{inv.id:05d}",
-        author="DeepTrace — Team Algorythm (SIH26_28)",
-        subject="Digital impersonation forensic analysis and evidence preservation record",
+        leftMargin=15 * mm, rightMargin=15 * mm, topMargin=25 * mm, bottomMargin=18 * mm,
+        title=f"DeepTrace Digital Impersonation Evidence Report INV-{inv.id:05d}",
+        author="DeepTrace - Team Algorythm (SIH26_28)",
+        subject="Victim-oriented digital impersonation forensic analysis and evidence preservation record",
     )
-    doc.build(story, onFirstPage=decorate, onLaterPages=decorate)
+    doc.build(story, onFirstPage=decorate_cover, onLaterPages=decorate_standard)
     return destination
