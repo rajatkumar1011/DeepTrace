@@ -34,12 +34,11 @@ from paths import PROJECT_ROOT, report_path, to_public_path
 from services.validation import (
     BOUNDARY as VALIDATION_BOUNDARY,
     INTERPRETER_NOTE,
-<<<<<<< Updated upstream
     FETCH_COMMAND,
-=======
->>>>>>> Stashed changes
     METRICS_COMMAND,
+    ROBUSTNESS_COMMAND,
     load_metrics,
+    load_robustness,
 )
 
 # ---------------------------------------------------------------------------
@@ -1560,6 +1559,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
          "printed.", small)
 
     metrics_run = load_metrics()
+    robustness_run = load_robustness()
 
     # ── identity matching ────────────────────────────────────────────────
     # Printed before manipulation because it is the layer the product rests on:
@@ -1582,11 +1582,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("Status", "Not measured in this environment"),
             ("Reason", identity_reason or "No labelled verification pairs were evaluated."),
             ("How to produce it", f"{METRICS_COMMAND}, after fetching pairs with "
-<<<<<<< Updated upstream
                                   f"{FETCH_COMMAND}"),
-=======
-                                  f"scripts/fetch_eval_data.py"),
->>>>>>> Stashed changes
         ])
         para(INTERPRETER_NOTE, small)
         para("No false-match rate is reported for the identity layer. The manipulation figures "
@@ -1857,7 +1853,6 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     # ── robustness ───────────────────────────────────────────────────────
     story.append(Paragraph("Robustness under degradation — implementation status",
                            subheading))
-<<<<<<< HEAD
     if not robustness_run.get("available"):
         keyvalues([
             ("Status", "Not measured in this environment"),
@@ -1945,27 +1940,6 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             story.append(Paragraph("What these robustness figures do not say", subheading))
             for text in robustness_caveats:
                 para(f"• {text}", small)
-=======
-    keyvalues([
-        ("Status", "Not implemented in this build"),
-        ("Evaluator requirement",
-         "Measure behaviour after compression, messaging/social re-upload and "
-         "screen-recording degradation."),
-        ("Current position",
-         "DeepTrace has not yet run or stored paired degradation measurements, so no "
-         "robustness score, decision-agreement percentage or score-shift value is reported."),
-        ("Planned measurement",
-         "Score the same source media before and after controlled degradation, then report "
-         "decision agreement and absolute score shift for each transform."),
-    ])
-    para(
-        "This is an explicit validation gap, not a passing result. The absence of robustness "
-        "measurements does not change the findings in this case, but it limits how strongly the "
-        "current manipulation score can be generalised to compressed, re-uploaded or "
-        "screen-recorded copies.",
-        small,
-    )
->>>>>>> b769302e9c815547a8c868605bb945f483382739
 
     # 23 ────────────────────────────────────────────────────────────────────
     section("Methodology, Models, Limitations and Notice")

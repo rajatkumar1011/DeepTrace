@@ -162,7 +162,6 @@ def test_interpreter_note_states_what_a_wrong_run_does():
     assert "exits" in validation.INTERPRETER_NOTE
     assert "caveats" in validation.INTERPRETER_NOTE
     assert "`python`" in validation.INTERPRETER_NOTE
-<<<<<<< Updated upstream
 
 
 def test_harness_commands_are_offered_as_one_payload():
@@ -184,5 +183,3 @@ def test_harness_commands_are_offered_as_one_payload():
     assert commands["interpreter_note"] == validation.INTERPRETER_NOTE
     for key in ("metrics_command", "robustness_command", "fetch_command"):
         assert not commands[key].startswith("python ")
-=======
->>>>>>> Stashed changes

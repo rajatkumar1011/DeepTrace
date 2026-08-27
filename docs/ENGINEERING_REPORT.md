@@ -98,11 +98,7 @@ All four gates were run twice, with a full backend restart in between, and again
 
 Backend cold-start capabilities: `ffmpeg: true`, `deepfakebench_xception_weights: true`, `speaker_model_cached: true`, `c2pa_reader: true`.
 
-<<<<<<< Updated upstream
 **Coverage of the 150 unit tests,** by file — chosen to cover properties that must hold regardless of which models are installed:
-=======
-**Coverage of the 148 unit tests,** by file — chosen to cover properties that must hold regardless of which models are installed:
->>>>>>> Stashed changes
 
 - `test_security.py` — path traversal across 6 payloads, shell-metacharacter stripping, filename length bounds, `resolve_inside` containment, no absolute paths in public payloads, size-cap abort leaving no partial file, server-side hashing proven by independent recomputation, SHA-256 known-answer (`b"abc"`), 11 SSRF refusals, and a two-layer test proving no non-URL token can reach a network call.
 - `test_integrity.py` — untouched file verifies; modified file reports MISMATCH and is *not* silently repaired; a single flipped bit at offset 2048 is detected; deleted file reports MISSING; absent recorded hash reports `NO_RECORDED_HASH` and explicitly is not treated as VERIFIED; one bad artifact fails the whole case; an **empty case does not claim integrity**.
@@ -251,7 +247,6 @@ carry their own published labels and a pinned revision.
 1. **Thresholds are published defaults, not calibrated values.** The 0.50 manipulation, 0.60 face and 0.25 voice thresholds are each model's own default. The 0.60 face threshold now has measurement behind it — precision 1.0000 and a 0.0000 false-match rate over 200 pairs (§7) — but it was not *tuned* on that set, and 100 negative pairs bound the claim to a 95% interval of 0.0000–0.0370. The 0.50 manipulation threshold has measurement behind it too, and the measurement says the problem is not the threshold: at AUC 0.417 the score is inverted on this corpus, so no operating point on it would help.
 2. **Manipulation detection does not transfer to whole-face synthesis.** Measured, published in §7 and printed in every report rather than worked around. Fixing it needs an in-distribution face-swap corpus, which needs a licence this project does not hold.
 3. **Audio robustness is weak.** Decision agreement 0.3750 over 8 paired comparisons. Reported as a gap; the sample is also too small to characterise it properly.
-<<<<<<< Updated upstream
 4. **Submitter identification is self-declared and unverified.** Intake collects the complainant's name, Aadhaar number, gender, date of birth and mobile number, and validates only their *format* — 12 Aadhaar digits, a valid 10-digit Indian mobile, a date of birth not in the future. Nothing is checked against UIDAI, a telecom operator or any other authority, and no endpoint claims otherwise. The stored values are never returned to the client after submission and are not printed into the PDF report, so the forensic artifact an investigator receives carries no unverified personal identifier. They are held in plaintext in the local SQLite database, which is the same store the custody section already declares as writable and unauthenticated (§7): treat the identification record as an intake note, not as proof of who filed the case.
 5. **Legacy rows display as unavailable.** Roughly 163–173 pre-existing `analysis_results` rows in the development `deeptrace.db` have `status = NULL` and old-schema `risk_fusion` payloads keyed `contributors` instead of `signals`. Historical cases therefore render as "unavailable" while freshly created cases are correct. This is a data-vintage artifact of schema evolution during development, not a code defect — a clean database has no such rows. **Demo on a freshly created case.**
 6. **Pydantic response models not implemented.** Endpoint responses are constructed as dicts rather than typed schemas. `/docs` therefore under-describes response shapes. Deferred deliberately at the end of the cycle: it is a wide refactor across 24 endpoints with real regression risk against a fully green system, and it changes no user-visible behaviour.
@@ -260,15 +255,6 @@ carry their own published labels and a pinned revision.
 9. **Similarity tracing is local-scope.** Copy detection compares against other cases in this SQLite instance only.
 10. **Benign log noise.** When a case original is a video and the investigator supplies an image as a suspected copy, the audio-fingerprint attempt logs a decode failure before degrading gracefully. Investigated and confirmed correct: the copy's type cannot be inferred from the case's type, so attempting and falling back is the right behaviour.
 11. **`docs/` was empty** before this report. It now holds this report, [VALIDATION.md](VALIDATION.md) and [WALKTHROUGH.md](WALKTHROUGH.md); `README.md` remains the entry point.
-=======
-4. **Legacy rows display as unavailable.** Roughly 163–173 pre-existing `analysis_results` rows in the development `deeptrace.db` have `status = NULL` and old-schema `risk_fusion` payloads keyed `contributors` instead of `signals`. Historical cases therefore render as "unavailable" while freshly created cases are correct. This is a data-vintage artifact of schema evolution during development, not a code defect — a clean database has no such rows. **Demo on a freshly created case.**
-5. **Pydantic response models not implemented.** Endpoint responses are constructed as dicts rather than typed schemas. `/docs` therefore under-describes response shapes. Deferred deliberately at the end of the cycle: it is a wide refactor across 22 endpoints with real regression risk against a fully green system, and it changes no user-visible behaviour.
-6. **Tracing is operator-directed only.** DeepTrace retrieves only URLs the operator explicitly supplies, over HTTPS, refusing private/loopback/link-local/metadata addresses, capped at 8 URLs and 25 MB. There is no crawling and no platform integration.
-7. **CPU-only performance.** A 12-frame video case takes tens of seconds. Adequate for demonstration; not tuned for throughput.
-8. **Similarity tracing is local-scope.** Copy detection compares against other cases in this SQLite instance only.
-9. **Benign log noise.** When a case original is a video and the investigator supplies an image as a suspected copy, the audio-fingerprint attempt logs a decode failure before degrading gracefully. Investigated and confirmed correct: the copy's type cannot be inferred from the case's type, so attempting and falling back is the right behaviour.
-10. **`docs/` was empty** before this report. It now holds this report, [VALIDATION.md](VALIDATION.md) and [WALKTHROUGH.md](WALKTHROUGH.md); `README.md` remains the entry point.
->>>>>>> Stashed changes
 
 ---
 
@@ -310,11 +296,7 @@ Demo on a **freshly created case** (see §8, item 5). To show voice verification
 
 **None.**
 
-<<<<<<< Updated upstream
 All four verification gates are green (150 unit tests in 4.0 s, 57 end-to-end assertions, clean typecheck, clean lint, successful production build). The live application was confirmed working after a full backend restart and after the final repository cleanup, with no console errors. No functional capability in the brief is missing.
-=======
-All four verification gates are green (148 unit tests in 2.7 s, 57 end-to-end assertions, clean typecheck, clean lint, successful production build). The live application was confirmed working after a full backend restart and after the final repository cleanup, with no console errors. No functional capability in the brief is missing.
->>>>>>> Stashed changes
 
 The one open engineering item — Pydantic response models (§8.3) — is code-quality polish that does not block the demo, affects no user-visible behaviour, and was deferred deliberately rather than rushed.
 

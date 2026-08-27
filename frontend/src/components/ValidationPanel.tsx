@@ -21,10 +21,7 @@ import type {
   ConfusionPoint,
   DatasetProvenance,
   FamilyBreakdown,
-<<<<<<< Updated upstream
   HarnessCommands,
-=======
->>>>>>> Stashed changes
   IdentityMetrics,
   IdentityPairProvenance,
   RobustnessChannel,
@@ -149,12 +146,8 @@ function IdentityBlock({ payload }: { payload: BenchmarkPayload }) {
         {heading}
         <NotMeasured
           reason={payload.reason || "No labelled evaluation has been run in this environment."}
-<<<<<<< Updated upstream
           command={payload.harness?.metrics_command ?? "scripts/benchmark.py"}
           note={payload.harness?.interpreter_note}
-=======
-          command="backend/venv/Scripts/python.exe scripts/benchmark.py"
->>>>>>> Stashed changes
         />
       </>
     );
@@ -169,12 +162,8 @@ function IdentityBlock({ payload }: { payload: BenchmarkPayload }) {
             || "The stored evaluation contains no scored verification pairs, so no precision, "
                + "recall or false-match rate is reported for identity matching. Fetch a pair set "
                + "first — the manipulation figures below do not cover this layer."}
-<<<<<<< Updated upstream
           command={payload.harness?.fetch_command ?? "scripts/fetch_eval_data.py"}
           note={payload.harness?.interpreter_note}
-=======
-          command="backend/venv/Scripts/python.exe scripts/fetch_eval_data.py"
->>>>>>> Stashed changes
         />
       </>
     );
@@ -674,11 +663,7 @@ function ConfusionLine({
   );
 }
 
-<<<<<<< Updated upstream
 function NotMeasured({ reason, command, note }: { reason: string; command: string; note?: string }) {
-=======
-function NotMeasured({ reason, command }: { reason: string; command: string }) {
->>>>>>> Stashed changes
   return (
     <div className="not-measured">
       <div className="inline-empty">
