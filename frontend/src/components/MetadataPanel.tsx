@@ -1,29 +1,28 @@
 import {
-  FaCertificate as BadgeCheck,
   FaFileCode as FileCode2,
   FaGlobe as Globe,
   FaInfoCircle as Info,
-  FaQuestionCircle as ShieldQuestion,
 } from "react-icons/fa";
-import { dataOf, nested, num, rows, str, strings } from "@/lib/modules";
+import { dataOf, nested, num, provenanceEstimate, rows, str, strings } from "@/lib/modules";
 import { formatBytes } from "@/lib/format";
 import type { InvestigationDetail } from "@/types";
 
 /**
- * Technical attributes and provenance. Absence of Content Credentials is the
- * normal case for social-media media and is reported as such — it is not
- * presented as a suspicious finding.
+ * Technical attributes, followed by the provenance estimator's located sources.
+ *
+ * Both halves describe where a file came from without asserting who made it: the
+ * container metadata records the tool that last wrote the bytes, and the
+ * estimator records pages that serve the same media. Neither is presented as
+ * attribution.
  */
 export function MetadataPanel({ investigation }: { investigation: InvestigationDetail }) {
   const metadataModule = investigation.analysis_results?.metadata;
-  const provenanceModule = investigation.analysis_results?.provenance;
   const metadata = dataOf(investigation, "metadata");
   const provenance = dataOf(investigation, "provenance");
   const container = nested(metadata, "container");
   const file = nested(metadata, "file");
   const exif = nested(metadata, "exif");
   const tags = nested(container, "container_tags");
-  const credentialsFound = provenance.credentials_found === true;
 
   return (
     <section className="content-card">
@@ -66,71 +65,33 @@ export function MetadataPanel({ investigation }: { investigation: InvestigationD
 
       <div className="panel-divider" />
 
-      <div className="content-card-heading tight">
-        <div>
-          <span>Content Credentials (C2PA)</span>
-          <h2>Provenance</h2>
-        </div>
-        <span className={`count-badge ${credentialsFound ? "badge-ok" : ""}`}>
-          {credentialsFound ? <BadgeCheck size={13} /> : <ShieldQuestion size={13} />}
-          {credentialsFound ? " manifest present" : " none present"}
-        </span>
-      </div>
-
-      <div className="kv-grid">
-        <Row label="Status" value={str(provenance, "status") || provenanceModule?.status || "Not run"} />
-        <Row label="Method" value={str(provenance, "method")} />
-        <Row label="Reader" value={str(provenance, "model_name")} />
-        <Row label="Active manifest" value={str(provenance, "active_manifest_label")} />
-        <Row label="Signed by" value={str(provenance, "signature_issuer")} />
-        <Row label="Claim generator" value={str(provenance, "claim_generator")} />
-      </div>
-
-      <p className="panel-note">
-        {str(provenance, "note") ||
-          "Most media shared on social platforms carries no Content Credentials. Their absence is expected and is not, by itself, an indication of manipulation."}
-      </p>
-
-      <div className="panel-divider" />
-
-      <ExternalSources search={nested(provenance, "external_search")} />
+      <ExternalSources provenance={provenance} />
     </section>
   );
 }
 
-/** What the badge may claim, given only the search's own status. */
-function searchBadge(status: string | null, verified: number, discovered: number) {
-  if (status === "completed") return `${discovered} found · ${verified} matched`;
-  if (status === "no_sources") return "no similar pages returned";
-  if (status === "discovered_only") return `${discovered} found · not verified`;
-  if (status === "not_configured") return "search key not configured";
-  if (status === "failed") return "search failed";
-  return "not run";
-}
-
 /**
- * Published copies located by reverse-image search, then verified locally.
+ * The provenance estimator: pages carrying this media, located then verified.
  *
  * Discovery and verification are shown as separate numbers on purpose. A page
  * returned by the search index is a lead; only a page whose served media matched
  * this file on DeepTrace's own hash and face comparison is reported as a match.
  * Collapsing the two would let an index's guess read as a forensic finding.
  */
-function ExternalSources({ search }: { search: Record<string, unknown> }) {
-  const status = str(search, "status");
+function ExternalSources({ provenance }: { provenance: Record<string, unknown> }) {
+  const outcome = provenanceEstimate(provenance);
+  const search = outcome.search;
   const sources = rows(search, "sources");
-  const discovered = num(search, "sources_discovered") ?? 0;
-  const verified = num(search, "sources_verified") ?? 0;
 
   return (
     <>
       <div className="content-card-heading tight">
         <div>
           <span>Where else has this media been published?</span>
-          <h2>Located sources</h2>
+          <h2>Provenance estimator</h2>
         </div>
-        <span className={`count-badge ${verified > 0 ? "badge-ok" : ""}`}>
-          <Globe size={13} /> {searchBadge(status, verified, discovered)}
+        <span className={`count-badge ${outcome.tone === "ok" ? "badge-ok" : ""}`}>
+          <Globe size={13} /> {outcome.label}
         </span>
       </div>
 

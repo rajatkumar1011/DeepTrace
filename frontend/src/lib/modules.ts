@@ -59,3 +59,56 @@ export function clock(seconds: number | null | undefined) {
 export function hasResult(module: AnalysisModule | null) {
   return module?.status === "completed";
 }
+
+/**
+ * The provenance estimator's own outcome, read from its own sub-payload.
+ *
+ * The `provenance` module records two independent checks under one key: the
+ * Content Credentials read at the top level, and the reverse-image source
+ * estimate under `external_search`. The module status the backend stores
+ * describes only the first one — it is `no_credentials` for nearly every real
+ * file — so any surface that badged the estimator with that status would label a
+ * case holding ten located pages and two verified matches "None present".
+ * Both the findings card and the metadata panel read the estimate from here, so
+ * the two cannot drift apart.
+ *
+ * `found` and `matched` stay separate numbers on purpose. A page returned by the
+ * index is a lead; only a page whose served media matched this file on
+ * DeepTrace's own hash and face comparison is a match. Collapsing them would let
+ * an index's guess read as a forensic finding.
+ */
+export function provenanceEstimate(data: Record<string, unknown> | null | undefined) {
+  const search = nested(data ?? undefined, "external_search");
+  const status = str(search, "status");
+  const found = num(search, "sources_discovered") ?? 0;
+  const matched = num(search, "sources_verified") ?? 0;
+
+  let label: string;
+  let tone: "ok" | "muted" | "warn";
+  switch (status) {
+    case "completed":
+      label = `${found} found · ${matched} matched`;
+      tone = matched > 0 ? "ok" : "muted";
+      break;
+    case "no_sources":
+      label = "No copies located";
+      tone = "muted";
+      break;
+    case "discovered_only":
+      label = `${found} found · not verified`;
+      tone = "warn";
+      break;
+    case "not_configured":
+      label = "Search not configured";
+      tone = "muted";
+      break;
+    case "failed":
+      label = "Search failed";
+      tone = "warn";
+      break;
+    default:
+      label = "Not run";
+      tone = "muted";
+  }
+  return { search, status, found, matched, label, tone };
+}

@@ -102,8 +102,8 @@ export const MODULE_LABELS: Record<string, { title: string; plain: string; inver
     inverse: true,
   },
   provenance: {
-    title: "Content provenance",
-    plain: "Checks whether Content Credentials or other provenance information is available.",
+    title: "Provenance estimator",
+    plain: "Searches one reverse-image index for pages carrying this media, then fetches each candidate and compares what it serves against this file. Not an internet-wide search.",
   },
   similarity: {
     title: "Known-copy similarity",
@@ -116,6 +116,9 @@ export const MODULE_STATUS_COPY: Record<string, { label: string; tone: "ok" | "m
   completed: { label: "Completed", tone: "ok" },
   not_applicable: { label: "Not applicable", tone: "muted" },
   unavailable: { label: "Unavailable", tone: "warn" },
+  // Recorded by the provenance module when a file carries no Content Credentials.
+  // The provenance card badges its source estimate instead (see provenanceEstimate),
+  // so this label is kept only so an unexpected status never renders as a raw slug.
   no_credentials: { label: "None present", tone: "muted" },
   failed: { label: "Error", tone: "warn" },
   not_run: { label: "Not run", tone: "muted" },
