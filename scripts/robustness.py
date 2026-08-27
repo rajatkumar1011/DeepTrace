@@ -309,16 +309,35 @@ def apply_chain(source: str, workspace: str, steps: list[dict], key: str,
 # --------------------------------------------------------------------------- #
 
 def score_visual(path: str, frames: int) -> dict:
-    """Manipulation signal for an image or video, via the services the API uses."""
+    """Manipulation signal plus frame-level diagnostics via the real API services.
+
+    The additional diagnostics are intentionally additive: existing callers can keep
+    reading ``score`` exactly as before, while robustness validation can also measure
+    peak-score drift and whether the same suspicious sampled frames survive a
+    degradation. This matters because aggregate threshold agreement can hide a large
+    loss of frame-level forensic evidence.
+    """
     extension = os.path.splitext(path)[1].lower()
 
     if extension in IMAGE_EXT:
         result = deepfake.analyze_image(path)
         if not result or result.get("manipulation_signal") is None:
             return {"ok": False, "reason": "The manipulation model returned no score."}
-        return {"ok": True, "score": float(result["manipulation_signal"]),
-                "face_detected": bool(result.get("face_detected")),
-                "frames_scored": 1, "method": result.get("method")}
+        score = float(result["manipulation_signal"])
+        return {
+            "ok": True,
+            "score": score,
+            "peak_score": score,
+            "min_score": score,
+            "score_std": 0.0,
+            "flagged_frame_count": int(score >= DEFAULT_THRESHOLD),
+            "flagged_frame_ratio": float(score >= DEFAULT_THRESHOLD),
+            "flagged_frame_indices": [0] if score >= DEFAULT_THRESHOLD else [],
+            "frame_scores": [{"index": 0, "timestamp_seconds": None, "score": score}],
+            "face_detected": bool(result.get("face_detected")),
+            "frames_scored": 1,
+            "method": result.get("method"),
+        }
 
     if extension in VIDEO_EXT:
         workspace = tempfile.mkdtemp(prefix="deeptrace_rob_frames_")
@@ -330,14 +349,82 @@ def score_visual(path: str, frames: int) -> dict:
             if not aggregate or aggregate.get("manipulation_signal") is None:
                 return {"ok": False, "reason": "The manipulation model returned no score for the frames."}
             per_frame = aggregate.get("frame_results") or []
-            return {"ok": True, "score": float(aggregate["manipulation_signal"]),
-                    "face_detected": any(item.get("face_detected") for item in per_frame),
-                    "frames_scored": len(per_frame), "method": aggregate.get("method")}
+            frame_scores = []
+            flagged_indices = []
+            for position, item in enumerate(per_frame):
+                try:
+                    value = float(item.get("manipulation_signal"))
+                except (TypeError, ValueError):
+                    continue
+                index = item.get("frame_index")
+                if index is None:
+                    index = position
+                frame_scores.append({
+                    "index": index,
+                    "timestamp_seconds": item.get("frame_timestamp_seconds"),
+                    "score": round(value, 6),
+                })
+                if value >= DEFAULT_THRESHOLD:
+                    flagged_indices.append(index)
+            all_values = [float(item["score"]) for item in frame_scores]
+            aggregate_peak = float(aggregate.get("max_frame_signal", aggregate["manipulation_signal"]))
+            aggregate_min = float(aggregate.get("min_frame_signal", aggregate["manipulation_signal"]))
+            return {
+                "ok": True,
+                "score": float(aggregate["manipulation_signal"]),
+                # Evidence-retention flags are computed across every sampled frame, including
+                # whole-frame fallback scores when no face is found. Peak/min must use the same
+                # population or a report could show a peak below threshold alongside flagged frames.
+                "peak_score": max(all_values) if all_values else aggregate_peak,
+                "min_score": min(all_values) if all_values else aggregate_min,
+                "aggregate_peak_score": aggregate_peak,
+                "aggregate_min_score": aggregate_min,
+                "score_std": float(aggregate.get("signal_std", 0.0)),
+                "flagged_frame_count": int(aggregate.get("suspicious_frame_count", len(flagged_indices))),
+                "flagged_frame_ratio": aggregate.get("suspicious_frame_ratio"),
+                "flagged_frame_indices": flagged_indices,
+                "frame_scores": frame_scores,
+                "face_detected": any(item.get("face_detected") for item in per_frame),
+                "frames_scored": len(per_frame),
+                "method": aggregate.get("method"),
+            }
         finally:
             shutil.rmtree(workspace, ignore_errors=True)
 
     return {"ok": False, "reason": f"Unsupported extension {extension} for visual scoring."}
 
+
+def frame_evidence_comparison(baseline: dict, degraded: dict, threshold: float) -> dict:
+    """Compare peak and frame-level evidence in addition to aggregate score drift."""
+    base_peak = baseline.get("peak_score")
+    degraded_peak = degraded.get("peak_score")
+    base_flags = set(baseline.get("flagged_frame_indices") or [])
+    degraded_flags = set(degraded.get("flagged_frame_indices") or [])
+    retained = len(base_flags & degraded_flags)
+    introduced = len(degraded_flags - base_flags)
+    lost = len(base_flags - degraded_flags)
+    return {
+        "baseline_peak_score": round(float(base_peak), 4) if base_peak is not None else None,
+        "degraded_peak_score": round(float(degraded_peak), 4) if degraded_peak is not None else None,
+        "peak_absolute_delta": (round(abs(float(degraded_peak) - float(base_peak)), 4)
+                                if base_peak is not None and degraded_peak is not None else None),
+        "baseline_flagged_frames": len(base_flags),
+        "degraded_flagged_frames": len(degraded_flags),
+        "flagged_frames_retained": retained,
+        "flagged_frames_lost": lost,
+        "flagged_frames_introduced": introduced,
+        "flagged_frame_retention": (round(retained / len(base_flags), 4) if base_flags else None),
+        "flagged_frame_indices_baseline": sorted(base_flags),
+        "flagged_frame_indices_degraded": sorted(degraded_flags),
+        "peak_population": "all sampled frames, including whole-frame fallback scores",
+        "evidence_note": (
+            "No baseline sampled frame crossed the threshold, so retention is not defined; "
+            "score drift and any newly flagged frames remain reported."
+            if not base_flags else
+            "Retention is the share of originally flagged sampled-frame indices that remained "
+            "at or above the same threshold after degradation."
+        ),
+    }
 
 def score_audio(path: str) -> dict:
     """Editing indicator for the audio in ``path``, decoded the way the pipeline does."""
@@ -452,7 +539,7 @@ def evaluate_file(path: str, frames: int, threshold: float, include_audio: bool)
                     print(f"      {transform['key']}", flush=True)
                     ok, reason = run_ffmpeg(path, dest, visual_args(transform, source_has_audio))
                     results.append(_visual_row(transform, dest if ok else None, reason,
-                                               base["score"], frames, threshold))
+                                               base, frames, threshold))
 
                 for chain in chains:
                     steps = [by_key[name] for name in chain["steps"] if name in by_key]
@@ -461,7 +548,7 @@ def evaluate_file(path: str, frames: int, threshold: float, include_audio: bool)
                     print(f"      {chain['key']}", flush=True)
                     produced, reason = apply_chain(path, workspace, steps, chain["key"],
                                                    steps[-1].get("suffix", suffix), source_has_audio)
-                    results.append(_visual_row(chain, produced, reason, base["score"],
+                    results.append(_visual_row(chain, produced, reason, base,
                                                frames, threshold))
 
                 record["visual"] = {
@@ -469,6 +556,10 @@ def evaluate_file(path: str, frames: int, threshold: float, include_audio: bool)
                     "model": deepfake.active_model_name(),
                     "threshold": threshold,
                     "baseline_score": round(base["score"], 4),
+                    "baseline_peak_score": round(base.get("peak_score", base["score"]), 4),
+                    "baseline_flagged_frames": base.get("flagged_frame_count"),
+                    "baseline_flagged_frame_indices": base.get("flagged_frame_indices") or [],
+                    "baseline_frame_scores": base.get("frame_scores") or [],
                     "baseline_margin": round(abs(base["score"] - threshold), 4),
                     "baseline_near_threshold": abs(base["score"] - threshold) < NEAR_THRESHOLD,
                     "baseline_face_detected": base["face_detected"],
@@ -534,7 +625,7 @@ def evaluate_file(path: str, frames: int, threshold: float, include_audio: bool)
 
 
 def _visual_row(transform: dict, produced: str | None, reason: str | None,
-                baseline: float, frames: int, threshold: float) -> dict:
+                baseline: dict, frames: int, threshold: float) -> dict:
     row = {"key": transform["key"], "label": transform["label"],
            "stands_for": transform["stands_for"], "family": transform["family"]}
     if produced is None:
@@ -547,7 +638,8 @@ def _visual_row(transform: dict, produced: str | None, reason: str | None,
     row.update({
         "status": "completed",
         "output_bytes": os.path.getsize(produced),
-        **comparison(baseline, scored["score"], threshold),
+        **comparison(float(baseline["score"]), scored["score"], threshold),
+        **frame_evidence_comparison(baseline, scored, threshold),
         "degraded_face_detected": scored["face_detected"],
         "degraded_frames_scored": scored["frames_scored"],
     })
@@ -579,6 +671,9 @@ def aggregate(records: list[dict], channel: str) -> list[dict]:
                 "preserved": 0, "compared": 0, "failed": 0, "failures": [],
                 "flag_gained": 0, "flag_lost": 0, "near_threshold": 0,
                 "flips_away_from_threshold": 0,
+                "peak_deltas": [], "retention_values": [],
+                "baseline_flagged_total": 0, "retained_flagged_total": 0,
+                "lost_flagged_total": 0, "introduced_flagged_total": 0,
             })
             if row.get("status") != "completed":
                 bucket["failed"] += 1
@@ -588,6 +683,15 @@ def aggregate(records: list[dict], channel: str) -> list[dict]:
             bucket["compared"] += 1
             bucket["deltas"].append(row["absolute_delta"])
             bucket["signed"].append(row["delta"])
+            if row.get("peak_absolute_delta") is not None:
+                bucket["peak_deltas"].append(float(row["peak_absolute_delta"]))
+            baseline_flagged = int(row.get("baseline_flagged_frames") or 0)
+            bucket["baseline_flagged_total"] += baseline_flagged
+            bucket["retained_flagged_total"] += int(row.get("flagged_frames_retained") or 0)
+            bucket["lost_flagged_total"] += int(row.get("flagged_frames_lost") or 0)
+            bucket["introduced_flagged_total"] += int(row.get("flagged_frames_introduced") or 0)
+            if row.get("flagged_frame_retention") is not None:
+                bucket["retention_values"].append(float(row["flagged_frame_retention"]))
             if row.get("baseline_near_threshold"):
                 bucket["near_threshold"] += 1
             if row["decision_preserved"]:
@@ -617,6 +721,16 @@ def aggregate(records: list[dict], channel: str) -> list[dict]:
             "mean_absolute_delta": round(sum(deltas) / compared, 4) if compared else None,
             "max_absolute_delta": round(max(deltas), 4) if deltas else None,
             "mean_signed_delta": round(mean_signed, 4) if mean_signed is not None else None,
+            "mean_peak_absolute_delta": (round(sum(bucket["peak_deltas"]) / len(bucket["peak_deltas"]), 4)
+                                         if bucket["peak_deltas"] else None),
+            "flagged_frame_retention": (round(bucket["retained_flagged_total"] / bucket["baseline_flagged_total"], 4)
+                                        if bucket["baseline_flagged_total"] else None),
+            "mean_per_file_flagged_frame_retention": (round(sum(bucket["retention_values"]) / len(bucket["retention_values"]), 4)
+                                                       if bucket["retention_values"] else None),
+            "baseline_flagged_frames": bucket["baseline_flagged_total"],
+            "flagged_frames_retained": bucket["retained_flagged_total"],
+            "flagged_frames_lost": bucket["lost_flagged_total"],
+            "flagged_frames_introduced": bucket["introduced_flagged_total"],
             "signed_delta_direction": (None if mean_signed is None else
                                        "raises the score" if mean_signed > 0.005 else
                                        "lowers the score" if mean_signed < -0.005 else
@@ -647,6 +761,13 @@ def overall(summaries: list[dict]) -> dict | None:
     clear_preserved = sum(round((item["clear_cut_agreement"] or 0.0) * item["clear_cut_compared"])
                           for item in summaries)
     weighted = sum((item["mean_absolute_delta"] or 0.0) * item["files_compared"] for item in summaries)
+    peak_weighted_items = [item for item in summaries if item.get("mean_peak_absolute_delta") is not None]
+    peak_weight = sum(item["files_compared"] for item in peak_weighted_items)
+    peak_weighted = sum(item["mean_peak_absolute_delta"] * item["files_compared"] for item in peak_weighted_items)
+    baseline_flagged_total = sum(int(item.get("baseline_flagged_frames") or 0) for item in summaries)
+    retained_flagged_total = sum(int(item.get("flagged_frames_retained") or 0) for item in summaries)
+    lost_flagged_total = sum(int(item.get("flagged_frames_lost") or 0) for item in summaries)
+    introduced_flagged_total = sum(int(item.get("flagged_frames_introduced") or 0) for item in summaries)
     worst = max(summaries, key=lambda item: item["mean_absolute_delta"] or 0.0)
     return {
         "paired_comparisons": compared,
@@ -658,6 +779,13 @@ def overall(summaries: list[dict]) -> dict | None:
         "clear_cut_agreement": round(clear_preserved / clear_cut, 4) if clear_cut else None,
         "clear_cut_agreement_95_ci": wilson(clear_preserved, clear_cut) if clear_cut else None,
         "mean_absolute_delta": round(weighted / compared, 4),
+        "mean_peak_absolute_delta": round(peak_weighted / peak_weight, 4) if peak_weight else None,
+        "flagged_frame_retention": (round(retained_flagged_total / baseline_flagged_total, 4)
+                                    if baseline_flagged_total else None),
+        "baseline_flagged_frames": baseline_flagged_total,
+        "flagged_frames_retained": retained_flagged_total,
+        "flagged_frames_lost": lost_flagged_total,
+        "flagged_frames_introduced": introduced_flagged_total,
         "most_disruptive_transform": {"key": worst["key"], "media_type": worst["media_type"],
                                       "label": worst["label"],
                                       "mean_absolute_delta": worst["mean_absolute_delta"],
@@ -840,6 +968,70 @@ def caveats(records: list[dict], source_description: str, model: str) -> list[st
     return notes
 
 
+
+def parse_variant_specs(specs: list[str]) -> list[tuple[str, str]]:
+    parsed = []
+    for spec in specs:
+        if "=" not in spec:
+            raise ValueError(f"Variant must be LABEL=PATH, got: {spec}")
+        label, path = spec.split("=", 1)
+        label, path = label.strip(), path.strip()
+        if not label or not path:
+            raise ValueError(f"Variant must be LABEL=PATH, got: {spec}")
+        parsed.append((label, os.path.abspath(path)))
+    return parsed
+
+
+def evaluate_supplied_variants(baseline_path: str, variants: list[tuple[str, str]],
+                               frames: int, threshold: float) -> dict:
+    """Compare user-supplied real-world copies without generating new media.
+
+    This is deliberately separate from the automated ffmpeg transforms. It lets a
+    team measure a real third-party recompress, platform download, or true screen
+    recording exactly as received, while retaining the existing automated suite.
+    """
+    baseline = score_visual(baseline_path, frames)
+    if not baseline.get("ok"):
+        return {"status": "unavailable", "reason": baseline.get("reason")}
+    rows = []
+    for label, path in variants:
+        row = {"label": label, "file": os.path.basename(path), "path_recorded": False}
+        if not os.path.isfile(path):
+            row.update({"status": "unavailable", "reason": "Variant file was not found."})
+            rows.append(row)
+            continue
+        scored = score_visual(path, frames)
+        if not scored.get("ok"):
+            row.update({"status": "unavailable", "reason": scored.get("reason")})
+        else:
+            row.update({
+                "status": "completed",
+                "sha256": forensics.calculate_sha256(path),
+                "bytes": os.path.getsize(path),
+                **comparison(float(baseline["score"]), float(scored["score"]), threshold),
+                **frame_evidence_comparison(baseline, scored, threshold),
+            })
+        rows.append(row)
+    return {
+        "status": "completed",
+        "baseline": {
+            "file": os.path.basename(baseline_path),
+            "sha256": forensics.calculate_sha256(baseline_path),
+            "bytes": os.path.getsize(baseline_path),
+            "score": round(float(baseline["score"]), 4),
+            "peak_score": round(float(baseline.get("peak_score", baseline["score"])), 4),
+            "flagged_frames": int(baseline.get("flagged_frame_count") or 0),
+            "flagged_frame_indices": baseline.get("flagged_frame_indices") or [],
+        },
+        "variants": rows,
+        "interpretation": (
+            "These are supplied real-world or externally produced copies of one baseline file. "
+            "They are reported separately from DeepTrace's automated ffmpeg transforms so the "
+            "report never implies that a third-party recompress or actual screen recording was "
+            "generated by this harness."
+        ),
+    }
+
 def main() -> int:
     default_frames = 8
     try:
@@ -852,6 +1044,11 @@ def main() -> int:
                     "screen-recording degradation.")
     parser.add_argument("--media", action="append", default=[],
                         help="A file to evaluate. Repeatable. Overrides source discovery.")
+    parser.add_argument("--baseline", default=None,
+                        help="Optional baseline file for supplied real-world variant comparison.")
+    parser.add_argument("--variant", action="append", default=[], metavar="LABEL=PATH",
+                        help="A supplied degraded copy to compare with --baseline. Repeatable. "
+                             "This does not replace the existing automated transform suite.")
     parser.add_argument("--frames", type=int, default=default_frames,
                         help=f"Frames sampled per video, per variant (default {default_frames}).")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
@@ -872,12 +1069,15 @@ def main() -> int:
                              "GET /api/benchmark.")
     parser.add_argument("--skip-audio", action="store_true",
                         help="Visual transforms only.")
+    parser.add_argument("--supplied-only", action="store_true",
+                        help="Evaluate only --baseline/--variant files. Skip the automated ffmpeg transform suite. "
+                             "Useful for controlled real-world copies and faster CPU-only validation.")
     args = parser.parse_args()
 
     print("DeepTrace robustness evaluation")
 
     capability = forensics.ffmpeg_capability_detail()
-    if not capability["available"]:
+    if not args.supplied_only and not capability["available"]:
         print("\n  ffmpeg and ffprobe are both required to build degraded copies.")
         print(f"    ffmpeg:  {capability['ffmpeg']['detail']}")
         print(f"    ffprobe: {capability['ffprobe']['detail']}")
@@ -885,25 +1085,52 @@ def main() -> int:
               "unavailable rather than showing a partial result.")
         return NO_FFMPEG_EXIT
 
-    files, source_description = discover(args.media, max(1, args.max_files), args.dataset_sample,
-                                         not args.skip_audio)
-    if not files:
-        print(f"\n  No source media found ({source_description}).")
-        print(f"  Drop authentic media into {SOURCE_DIR} or pass --media <path>, then re-run.")
-        return NOTHING_TO_EVALUATE_EXIT
+    if args.supplied_only:
+        if not (args.baseline and args.variant):
+            print("\n  --supplied-only requires --baseline plus at least one --variant LABEL=PATH.")
+            return NOTHING_TO_EVALUATE_EXIT
+        baseline_path = args.baseline if os.path.isabs(args.baseline) else os.path.abspath(args.baseline)
+        if not os.path.isfile(baseline_path):
+            print(f"\n  Baseline file not found: {baseline_path}")
+            return NOTHING_TO_EVALUATE_EXIT
+        files = [baseline_path]
+        source_description = "supplied baseline and externally produced variants only"
+    else:
+        explicit_media = list(args.media)
+        if args.baseline and not explicit_media:
+            explicit_media = [args.baseline]
+        files, source_description = discover(explicit_media, max(1, args.max_files), args.dataset_sample,
+                                             not args.skip_audio)
+        if not files:
+            print(f"\n  No source media found ({source_description}).")
+            print(f"  Drop authentic media into {SOURCE_DIR} or pass --media <path>, then re-run.")
+            return NOTHING_TO_EVALUATE_EXIT
 
     print(f"  source:    {source_description}")
     print(f"  files:     {len(files)}")
     print(f"  frames:    {args.frames} per video variant")
     print(f"  threshold: {args.threshold}")
+    if args.supplied_only:
+        print("  mode:      supplied variants only (automated transforms skipped)")
 
     started = time.time()
     records = []
-    for index, path in enumerate(files, 1):
-        print(f"\n  [{index}/{len(files)}] {os.path.basename(path)}", flush=True)
-        records.append(evaluate_file(path, max(1, args.frames), args.threshold, not args.skip_audio))
+    if not args.supplied_only:
+        for index, path in enumerate(files, 1):
+            print(f"\n  [{index}/{len(files)}] {os.path.basename(path)}", flush=True)
+            records.append(evaluate_file(path, max(1, args.frames), args.threshold, not args.skip_audio))
 
     model = deepfake.active_model_name()
+    supplied_variants = None
+    if args.baseline and args.variant:
+        baseline_path = args.baseline if os.path.isabs(args.baseline) else os.path.abspath(args.baseline)
+        try:
+            variant_specs = parse_variant_specs(args.variant)
+            supplied_variants = evaluate_supplied_variants(
+                baseline_path, variant_specs, max(1, args.frames), args.threshold
+            )
+        except ValueError as error:
+            supplied_variants = {"status": "unavailable", "reason": str(error)}
     visual_summary = aggregate(records, "visual")
     audio_summary = aggregate(records, "audio")
 
@@ -914,7 +1141,7 @@ def main() -> int:
             "python": sys.version.split()[0],
             "platform": sys.platform,
             "manipulation_model": model,
-            "ffmpeg": capability["ffmpeg"]["detail"],
+            "ffmpeg": capability.get("ffmpeg", {}).get("detail", "not required for supplied-only mode"),
             "frames_per_video": max(1, args.frames),
         },
         "threshold": args.threshold,
@@ -926,10 +1153,11 @@ def main() -> int:
         "what_this_measures": (
             "Score stability, not accuracy. Each source file is scored by the real pipeline, then "
             "re-scored after a real ffmpeg transform that stands for a specific real-world event "
-            "(platform recompression, a messaging re-upload, a screen recording). The headline "
-            "figure is decision agreement: the share of paired comparisons where the degraded copy "
-            "lands on the same side of the threshold as the original."
+            "(platform recompression, a messaging re-upload, a screen recording). The artifact "
+            "reports both aggregate decision agreement and frame-level evidence retention, because "
+            "threshold agreement alone can hide a large loss of suspicious-frame evidence."
         ),
+        "supplied_variants": supplied_variants,
         "visual": {
             "channel": "Image/video manipulation signal",
             "per_transform": visual_summary,
@@ -941,11 +1169,16 @@ def main() -> int:
             "overall": overall(audio_summary),
         },
         "per_file": records,
-        "caveats": caveats(records, source_description, model),
+        "caveats": (caveats(records, source_description, model) if records else [
+            "This run evaluated supplied baseline/variant files only. It measures paired score stability on "
+            "those specific copies and does not by itself establish robustness across a representative corpus.",
+            "Run the automated transform suite and/or a larger collection before making general robustness claims."
+        ]),
         "provenance": (
-            "Produced by scripts/robustness.py. Every degraded copy was generated on this machine "
-            "by ffmpeg and re-scored by the same services the API uses. No delta, agreement figure "
-            "or transform result is estimated or carried over from another run."
+            "Produced by scripts/robustness.py. In supplied-only mode, the baseline and degraded copies "
+            "were provided as files and re-scored by the same manipulation service the API uses; no claim "
+            "is made that DeepTrace generated those copies. In automated mode, degraded copies are generated "
+            "locally with ffmpeg. No delta or agreement figure is estimated or carried over from another run."
         ),
     }
 

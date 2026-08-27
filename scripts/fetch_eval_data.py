@@ -516,8 +516,9 @@ def build_manifest(items: list[dict], skipped: list[dict], faces_meta: dict,
             "The manipulated class is whole-face GAN synthesis (StyleGAN), not face swapping. The "
             "Xception detector DeepTrace loads was trained on FaceForensics++ face-swap and "
             "reenactment forgeries, so this is a cross-generator generalisation test, not an "
-            "in-distribution one. A result here is a lower bound on face-swap performance and must "
-            "not be quoted as a FaceForensics++ or Celeb-DF number. Use scripts/import_eval_set.py "
+            "in-distribution one. Performance on this StyleGAN corpus does not establish performance "
+            "on face-swap or reenactment corpora and must not be quoted as a FaceForensics++ or "
+            "Celeb-DF number. Use scripts/import_eval_set.py "
             "with a licensed copy of either corpus for an in-distribution figure."
         ),
         "independence_warning": (
