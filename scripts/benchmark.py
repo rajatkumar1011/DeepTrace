@@ -302,6 +302,27 @@ def score_file(path: str, frames: int) -> dict:
     return {"ok": False, "reason": f"Unsupported extension {extension}."}
 
 
+def _sanitise_transferability_warning(value):
+    """Remove an obsolete inference from older dataset manifests.
+
+    A cross-generator StyleGAN test cannot be called a mathematical lower bound on
+    face-swap performance. Preserve the warning's scope without overstating what the
+    experiment proves.
+    """
+    if not value:
+        return value
+    text = str(value)
+    old = (
+        "A result here is a lower bound on face-swap performance and must not be quoted as a "
+        "FaceForensics++ or Celeb-DF number."
+    )
+    new = (
+        "Performance on this StyleGAN corpus does not establish performance on face-swap or "
+        "reenactment corpora and must not be quoted as a FaceForensics++ or Celeb-DF result."
+    )
+    return text.replace(old, new)
+
+
 def dataset_provenance(real_files: list[str], fake_files: list[str], dataset_dir: str) -> dict:
     """Where the labels came from, stated in the results rather than assumed.
 
@@ -338,7 +359,9 @@ def dataset_provenance(real_files: list[str], fake_files: list[str], dataset_dir
                 "construction": manifest.get("construction"),
                 "manipulation_families": manifest.get("manipulation_families"),
                 "confound_control": manifest.get("confound_control"),
-                "transferability_warning": manifest.get("transferability_warning"),
+                "transferability_warning": _sanitise_transferability_warning(
+                    manifest.get("transferability_warning")
+                ),
                 "independence_warning": manifest.get("independence_warning"),
                 "scale_warning": manifest.get("scale_warning"),
                 "declared_counts": declared or None,

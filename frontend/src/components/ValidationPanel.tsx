@@ -558,11 +558,58 @@ function RobustnessBlock({ robustness, harness }: { robustness: RobustnessPayloa
         </p>
       )}
 
-      <ChannelSummary channel={robustness.visual} title="Image and video manipulation signal" />
-      <ChannelSummary channel={robustness.audio} title="Audio editing indicator" />
+      <SuppliedVariants robustness={robustness} />
+
+      <ChannelSummary channel={robustness.visual} title="Automated degradation suite — image/video" />
+      <ChannelSummary channel={robustness.audio} title="Automated degradation suite — audio" />
 
       <Caveats items={robustness.caveats} heading="What the robustness figures do not say" />
     </>
+  );
+}
+
+
+function SuppliedVariants({ robustness }: { robustness: RobustnessPayload }) {
+  const supplied = robustness.supplied_variants;
+  if (!supplied || supplied.status !== "completed" || !supplied.variants?.length) return null;
+
+  const baseline = supplied.baseline;
+  return (
+    <div className="supplied-robustness">
+      <h4>Supplied real-world / externally produced copies</h4>
+      {supplied.interpretation && <p className="panel-note">{supplied.interpretation}</p>}
+
+      {baseline && (
+        <div className="robustness-baseline">
+          <span>Baseline</span>
+          <strong>{baseline.file || "Baseline media"}</strong>
+          <small>
+            mean {ratio(baseline.score)} · peak {ratio(baseline.peak_score)} · {baseline.flagged_frames ?? 0} flagged sampled frame(s)
+          </small>
+        </div>
+      )}
+
+      <div className="mini-table supplied-variants-table">
+        <div className="mini-table-head">
+          <span>Variant</span><span>Mean</span><span>Peak</span><span>Flagged</span><span>Retention</span><span>Shift</span>
+        </div>
+        {supplied.variants.map((variant, index) => (
+          <div className="mini-table-row" key={`${variant.label || "variant"}-${index}`}>
+            <span title={variant.file}>{variant.label || variant.file || `Variant ${index + 1}`}</span>
+            <span>{variant.status === "completed" ? ratio(variant.degraded_score) : "—"}</span>
+            <span>{variant.status === "completed" ? ratio(variant.degraded_peak_score) : "—"}</span>
+            <span>{variant.status === "completed" ? variant.degraded_flagged_frames ?? 0 : "—"}</span>
+            <span>{variant.status === "completed" && variant.flagged_frame_retention !== null && variant.flagged_frame_retention !== undefined
+              ? `${Math.round(variant.flagged_frame_retention * 100)}%` : "N/A"}</span>
+            <span>{variant.status === "completed" ? `mean ${ratio(variant.absolute_delta)} · peak ${ratio(variant.peak_absolute_delta)}` : variant.reason || "Not measured"}</span>
+          </div>
+        ))}
+      </div>
+      <p className="panel-note">
+        Retention is the share of sampled frames that were already above the threshold in the baseline and remained above it after degradation.
+        These are controlled measurements on the supplied copies, not a claim of general robustness.
+      </p>
+    </div>
   );
 }
 

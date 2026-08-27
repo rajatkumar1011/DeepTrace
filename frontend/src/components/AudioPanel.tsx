@@ -33,7 +33,7 @@ export function AudioPanel({ investigation }: { investigation: InvestigationDeta
   const audioTrack = investigation.evidence.find((item) => item.type === "audio");
 
   return (
-    <section className="content-card">
+    <section className="content-card audio-panel">
       <div className="content-card-heading">
         <div>
           <span>Sound and synchronisation</span>
@@ -65,11 +65,13 @@ export function AudioPanel({ investigation }: { investigation: InvestigationDeta
           </div>
 
           {discontinuities.length > 0 && (
-            <div className="chip-row">
-              <strong>Abrupt level changes at</strong>
-              {discontinuities.slice(0, 12).map((item, index) => (
-                <span className="chip" key={`${item.timestamp_seconds}-${index}`}>{clock(num(item, "timestamp_seconds"))}</span>
-              ))}
+            <div className="chip-group">
+              <strong className="chip-group-label">Abrupt level changes at</strong>
+              <div className="chip-row">
+                {discontinuities.slice(0, 12).map((item, index) => (
+                  <span className="chip" key={`${item.timestamp_seconds}-${index}`}>{clock(num(item, "timestamp_seconds"))}</span>
+                ))}
+              </div>
             </div>
           )}
 

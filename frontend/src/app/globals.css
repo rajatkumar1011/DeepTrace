@@ -791,3 +791,38 @@ html.a11y-contrast .side-copy, html.a11y-contrast .panel-note, html.a11y-contras
 
 .caveat-list { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 8px; }
 .caveat-list li { color: #4a5a6e; font-size: 11.5px; line-height: 1.55; }
+
+/* Final SIH validation + spacing pass --------------------------------------- */
+.audio-panel .audio-player { margin: 12px 0 16px; }
+.audio-panel .stat-grid { margin-bottom: 18px; }
+.audio-panel .observation-list { margin-top: 18px; }
+.audio-panel .panel-note { margin-top: 16px; }
+.audio-panel .panel-divider { margin: 26px 0 22px; }
+.audio-panel .mini-table { margin-top: 14px; }
+
+.chip-group { margin: 2px 0 18px; }
+.chip-group-label { display: block; margin-bottom: 9px; color: #2b405a; font-size: 13px; line-height: 1.35; }
+.chip-group .chip-row { margin-bottom: 0; }
+
+.validation-panel { margin-top: 0; }
+.validation-panel .custody-subhead { margin-top: 2px; margin-bottom: 12px; }
+.validation-panel .metric-tiles { margin-bottom: 14px; }
+.validation-panel .technical-details { margin-top: 18px; }
+.validation-panel .form-alert { margin-top: 14px; }
+
+.supplied-robustness { margin-top: 18px; }
+.supplied-robustness h4 { color: #2b405a; font-size: 13px; margin: 0 0 7px; }
+.robustness-baseline { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; align-items: baseline; border: 1px solid var(--line); background: #f8fafc; border-radius: 7px; padding: 11px 13px; margin: 12px 0; }
+.robustness-baseline > span { color: var(--blue); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.robustness-baseline > strong { color: #1b355a; font-size: 12px; overflow-wrap: anywhere; }
+.robustness-baseline > small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+.supplied-variants-table .mini-table-head,
+.supplied-variants-table .mini-table-row { grid-template-columns: minmax(0, 1.8fr) repeat(4, minmax(0, .7fr)) minmax(0, 1.5fr); }
+.supplied-variants-table .mini-table-row { font-variant-numeric: tabular-nums; }
+.supplied-variants-table .mini-table-row > span:first-child { white-space: normal; overflow-wrap: anywhere; }
+
+@media (max-width: 860px) {
+  .supplied-variants-table { overflow-x: auto; }
+  .supplied-variants-table .mini-table-head,
+  .supplied-variants-table .mini-table-row { min-width: 720px; }
+}

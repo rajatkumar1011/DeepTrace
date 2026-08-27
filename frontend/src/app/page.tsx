@@ -94,7 +94,7 @@ const emptyStats: DashboardStats = {
   protected_identities: 0,
 };
 
-type CaseTab = "findings" | "frames" | "audio" | "technical" | "evidence" | "tracing" | "next";
+type CaseTab = "findings" | "frames" | "audio" | "technical" | "evidence" | "tracing" | "validation" | "next";
 
 export default function DeepTraceApp() {
   const [view, setView] = useState<ViewKey>("home");
@@ -801,6 +801,7 @@ const CASE_TABS: { key: CaseTab; label: string }[] = [
   { key: "technical", label: "Metadata" },
   { key: "evidence", label: "Evidence & integrity" },
   { key: "tracing", label: "Tracing" },
+  { key: "validation", label: "Validation" },
   { key: "next", label: "Next steps" },
 ];
 
@@ -1037,6 +1038,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
             </>
           )}
           {tab === "tracing" && <TracePanel investigation={investigation} onChanged={load} />}
+          {tab === "validation" && <ValidationPanel />}
           {tab === "next" && <GuidancePanel investigationId={investigation.id} ready={completed} />}
         </div>
 
@@ -1059,7 +1061,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
             <div className="side-heading"><ClipboardCheck size={20} /><div><span>Next step</span><h2>Prepare to report</h2></div></div>
             <ol className="next-actions">
               <li><span>1</span><div><strong>Keep screenshots and source URLs</strong><p>Save the post/page URL, username, date/time and any threats or messages.</p></div></li>
-              <li><span>2</span><div><strong>Generate the DeepTrace report</strong><p>Twenty-two sections covering the chain of custody, evidence hashes, per-module findings, the timeline and reporting routes.</p></div></li>
+              <li><span>2</span><div><strong>Generate the DeepTrace report</strong><p>Twenty-three sections covering the chain of custody, evidence hashes, per-module findings, measured validation, robustness, the timeline and reporting routes.</p></div></li>
               <li><span>3</span><div><strong>File or support your official complaint</strong><p>Use the National Cyber Crime Reporting Portal or the appropriate police/cyber cell process.</p></div></li>
             </ol>
             <button className="btn btn-primary btn-full" onClick={buildReport} disabled={actionBusy || !completed}>{actionBusy ? <><LoaderCircle className="spin" size={17} /> Preparing…</> : <><Download size={17} /> {reportReady ? "Regenerate report" : "Generate evidence report"}</>}</button>
