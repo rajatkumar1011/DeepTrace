@@ -33,7 +33,10 @@ from paths import PROJECT_ROOT, report_path, to_public_path
 from services.validation import (
     BOUNDARY as VALIDATION_BOUNDARY,
     INTERPRETER_NOTE,
+<<<<<<< Updated upstream
     FETCH_COMMAND,
+=======
+>>>>>>> Stashed changes
     METRICS_COMMAND,
     ROBUSTNESS_COMMAND,
     load_metrics,
@@ -1077,7 +1080,11 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("Status", "Not measured in this environment"),
             ("Reason", identity_reason or "No labelled verification pairs were evaluated."),
             ("How to produce it", f"{METRICS_COMMAND}, after fetching pairs with "
+<<<<<<< Updated upstream
                                   f"{FETCH_COMMAND}"),
+=======
+                                  f"scripts/fetch_eval_data.py"),
+>>>>>>> Stashed changes
         ])
         para(INTERPRETER_NOTE, small)
         para("No false-match rate is reported for the identity layer. The manipulation figures "
