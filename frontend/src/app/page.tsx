@@ -75,7 +75,7 @@ import {
   startAnalysis,
 } from "@/lib/api/deeptrace";
 import { formatBytes, formatDate, formatPercent } from "@/lib/format";
-import { num, str } from "@/lib/modules";
+import { nested, num, str } from "@/lib/modules";
 import type {
   DashboardStats,
   DemoAsset,
@@ -965,7 +965,12 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
                         <div className="finding-row" key={key}>
                           <span className="finding-icon"><SearchCheck size={19} /></span>
                           <div className="finding-copy">
-                            <strong>{copy.title} <em className={`status-tag tone-${statusCopy.tone}`}>{statusCopy.label}</em></strong>
+                            <strong>
+                              {copy.title}{" "}
+                              <em className={`status-tag tone-${statusCopy.tone}`}>
+                                {key === "provenance" ? provenanceFindingBadge(analysis.data) : statusCopy.label}
+                              </em>
+                            </strong>
                             <p>{plainModuleResult(key, analysis.status, analysis.score, analysis.data)}</p>
                           </div>
                           <span className="finding-score">{analysis.status === "completed" ? formatPercent(analysis.score) : "—"}</span>
@@ -1066,6 +1071,36 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
   );
 }
 
+function provenanceFindingBadge(data?: Record<string, unknown> | null) {
+  const payload = data || {};
+  const external = nested(payload, "external_search");
+  const status = str(external, "status");
+  const discovered = num(external, "sources_discovered") ?? 0;
+  const verified = num(external, "sources_verified") ?? 0;
+
+  if (status === "completed") {
+    return `${discovered} FOUND · ${verified} MATCHED`;
+  }
+
+  if (status === "no_sources") {
+    return "0 FOUND · 0 MATCHED";
+  }
+
+  if (status === "discovered_only") {
+    return `${discovered} FOUND · NOT VERIFIED`;
+  }
+
+  if (status === "failed") {
+    return "SEARCH FAILED";
+  }
+
+  if (status === "not_configured") {
+    return "SEARCH NOT CONFIGURED";
+  }
+
+  return "NOT RUN";
+}
+
 /**
  * Plain-language sentence for one module. A module that did not produce a result
  * says so and says why — it is never described as if it had found nothing.
@@ -1073,13 +1108,46 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
 function plainModuleResult(key: string, status: string, score: number | null, data?: Record<string, unknown> | null) {
   const payload = data || {};
 
+  // Content Credentials (C2PA) and external source discovery are two different
+  // provenance signals. The provenance module can legitimately have a status
+  // such as "no_credentials" while its external reverse-image search completed
+  // successfully, so handle this module before the generic status branch.
+  if (key === "provenance") {
+    const external = nested(payload, "external_search");
+    const externalStatus = str(external, "status");
+    const discovered = num(external, "sources_discovered") ?? 0;
+    const verified = num(external, "sources_verified") ?? 0;
+
+    const credentialText =
+      payload.credentials_found === true
+        ? "Content Credentials are attached to this file."
+        : "No Content Credentials are attached to this file. That is normal for media shared on social platforms and is not itself suspicious.";
+
+    if (externalStatus === "completed" && verified > 0) {
+      return `${credentialText} External source discovery found ${discovered} candidate page(s) and locally verified ${verified} matching public source(s).`;
+    }
+
+    if (externalStatus === "completed" && discovered > 0) {
+      return `${credentialText} External source discovery found ${discovered} candidate page(s), but none were locally verified as matching this media.`;
+    }
+
+    if (externalStatus === "no_sources") {
+      return `${credentialText} The external source search did not return a similar public page in this run.`;
+    }
+
+    if (externalStatus === "failed") {
+      return `${credentialText} The external source search could not be completed for this run.`;
+    }
+
+    if (externalStatus === "not_configured") {
+      return `${credentialText} External source discovery was not run because the search service is not configured.`;
+    }
+
+    return credentialText;
+  }
+
   if (status !== "completed") {
     const reason = str(payload, "reason") || str(payload, "details") || str(payload, "status");
-    if (key === "provenance") {
-      return payload.credentials_found === true
-        ? "Content Credentials were detected. They may provide useful provenance context."
-        : "No Content Credentials are attached to this file. That is normal for media shared on social platforms and is not itself suspicious.";
-    }
     if (status === "not_applicable") return reason || "This check does not apply to the submitted media.";
     return reason || "This signal was not available for the current media or environment.";
   }
