@@ -240,6 +240,27 @@ def _risk_palette(level: str | None) -> tuple:
     return colors.HexColor("#A15C00"), PALE_ORANGE
 
 
+def _validation_caveat_text(value) -> str:
+    """Render validation caveats without preserving an obsolete statistical claim.
+
+    Older public-corpus manifests called the StyleGAN result a "lower bound" on
+    face-swap performance. A cross-generator test cannot establish that bound, so
+    legacy artifacts are corrected at presentation time while their measured
+    numbers remain untouched.
+    """
+    text = str(value or "")
+    old = (
+        "A result here is a lower bound on face-swap performance and must not be quoted as a "
+        "FaceForensics++ or Celeb-DF number."
+    )
+    new = (
+        "Performance on this cross-generator StyleGAN corpus does not establish performance on "
+        "face-swap or reenactment corpora and must not be quoted as a FaceForensics++ or "
+        "Celeb-DF result."
+    )
+    return text.replace(old, new)
+
+
 def _dominant_risk_signal(payload: dict | None) -> dict | None:
     """Return the signal with the largest recorded contribution.
 
@@ -254,11 +275,9 @@ def _dominant_risk_signal(payload: dict | None) -> dict | None:
     return max(valid, key=lambda item: float(item.get("contribution") or 0.0))
 
 
-# Round 2.1 asks for robustness testing against compression, re-upload and
-# screen-recording degradation. That harness is not implemented in the current
-# DeepTrace build, so the report states the gap explicitly and never advertises
-# a command or result that does not exist.
-ROBUSTNESS_HARNESS_IMPLEMENTED = False
+# Robustness validation is optional at runtime. The report never assumes it ran;
+# services.validation.load_robustness() decides whether a measured artifact is
+# available and the PDF reports only what that artifact actually contains.
 
 
 class DeepTraceBrand(Flowable):
@@ -940,6 +959,25 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     story.append(Spacer(1, 4 * mm))
     if risk:
         para(risk.get("explanation"))
+        _summary_threshold = float((deepfake or {}).get("threshold") or 0.5)
+        _summary_rows = (deepfake or {}).get("frame_results") or []
+        _summary_fallback_flagged = []
+        for _row in _summary_rows:
+            try:
+                _score_value = float(_row.get("manipulation_signal"))
+            except (TypeError, ValueError):
+                continue
+            if not _row.get("face_detected") and _score_value >= _summary_threshold:
+                _summary_fallback_flagged.append(_row)
+        if _summary_fallback_flagged:
+            para(
+                f"Sampling-scope clarification: the headline Xception aggregate uses "
+                f"{(deepfake or {}).get('frames_scored_for_aggregate') or 0} face-detected sampled "
+                f"frame(s). Separately, {len(_summary_fallback_flagged)} no-face sampled frame(s) "
+                f"crossed the {_summary_threshold:.2f} threshold under whole-frame fallback scoring "
+                "and are therefore shown in the localization review window(s).",
+                small,
+            )
         keyvalues([
             ("Overall risk", f"{risk.get('risk_level')} — {_score(risk.get('overall_risk_score'), 3)} "
                              f"on a 0–1 scale"),
@@ -1232,8 +1270,8 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("Frames used for the aggregate", deepfake.get("frames_scored_for_aggregate")
                                               or deepfake.get("frames_analyzed")),
             ("Aggregate basis", deepfake.get("aggregate_basis")),
-            ("Frames above threshold", deepfake.get("suspicious_frame_count")),
-            ("Highest frame score", _score(
+            ("Aggregate-population frames above threshold", deepfake.get("suspicious_frame_count")),
+            ("Highest aggregate-population frame score", _score(
                 deepfake.get("max_frame_signal")
                 if deepfake.get("max_frame_signal") is not None
                 else deepfake.get("manipulation_signal")
@@ -1249,6 +1287,37 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                 else (0.0 if deepfake.get("frames_analyzed") == 1 else None)
             )),
         ])
+        _threshold = float(deepfake.get("threshold") or 0.5)
+        _frame_rows = deepfake.get("frame_results") or []
+        _all_scores = []
+        _fallback_scores = []
+        for _row in _frame_rows:
+            try:
+                _value = float(_row.get("manipulation_signal"))
+            except (TypeError, ValueError):
+                continue
+            _all_scores.append(_value)
+            if not _row.get("face_detected"):
+                _fallback_scores.append(_value)
+        _all_flagged = sum(value >= _threshold for value in _all_scores)
+        _fallback_flagged = sum(value >= _threshold for value in _fallback_scores)
+        _aggregate_n = int(deepfake.get("frames_scored_for_aggregate") or deepfake.get("frames_analyzed") or 0)
+        _all_n = int(deepfake.get("frames_analyzed") or len(_all_scores) or 0)
+        if _all_n > _aggregate_n or _fallback_scores:
+            keyvalues([
+                ("All sampled frames above threshold", _all_flagged),
+                ("Whole-frame fallback samples", len(_fallback_scores)),
+                ("Whole-frame fallback samples above threshold", _fallback_flagged),
+                ("Highest score across all sampled frames", _score(max(_all_scores) if _all_scores else None)),
+            ])
+            para(
+                "The headline manipulation signal and aggregate-population counts use face-detected "
+                "frames when any face crops are available, because Xception is a face-manipulation "
+                "detector. Frames where no face was located may still receive a whole-frame fallback "
+                "score for review and localization. Those fallback scores are listed separately above "
+                "so an aggregate count of zero cannot be mistaken for zero flagged sampled frames.",
+                small,
+            )
         if deepfake.get("interpretation"):
             para(deepfake["interpretation"])
         frame_results = deepfake.get("frame_results") or []
@@ -1460,9 +1529,11 @@ def generate_report(investigation_id: int, db_session) -> str | None:
               for s in trace_sources],
              [50 * mm, 22 * mm, 34 * mm, 30 * mm, CONTENT_WIDTH - 136 * mm])
     else:
-        para("No external source was supplied for this case, so no copy was retrieved or compared. "
-             "Where the media was found is investigator-supplied information; DeepTrace cannot "
-             "discover it.")
+        para("No investigator-supplied source URL was provided for direct source tracing, so this "
+             "module did not retrieve a specific copy for comparison. Separately, the Provenance "
+             "Estimator may discover candidate public sources through reverse-image discovery; "
+             "those results are reported in Section 10 and are not treated as investigator-supplied "
+             "source evidence.")
     para("DeepTrace retrieves only specific public HTTPS URLs an investigator supplies, over a "
          "size-capped direct request. It performs no internet-wide search, accesses no private or "
          "authenticated API, bypasses no authentication, and circumvents no access control. Absence "
@@ -1474,7 +1545,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         keyvalues([
             ("Overall risk score", _score(risk.get("overall_risk_score"))),
             ("Risk level", risk.get("risk_level")),
-            ("Fusion method", risk.get("formula")),
+            ("Fusion method", str(risk.get("formula") or "").replace("weightᵢ", "weight_i").replace("normalizedᵢ", "normalized_i").replace("■", "_i")),
             ("Signals available", risk.get("signals_used")),
             ("Signals excluded", risk.get("signals_excluded")),
         ])
@@ -1491,9 +1562,40 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         story.append(Paragraph("What each signal contributed", subheading))
         for signal in risk.get("signals") or []:
             # Appended as a Paragraph rather than through para(), which escapes its
-            # whole argument and would print the <b> tags literally.
+            # whole argument and would print the <b> tags literally. For manipulation
+            # evidence, use the same face-aggregate / whole-frame-fallback distinction
+            # as Section 11 so the risk narrative cannot imply that no sampled frame
+            # crossed threshold when fallback frames did.
+            detail = str(signal.get("detail") or "")
+            if str(signal.get("label") or "").strip().lower() == "manipulation evidence" and deepfake:
+                threshold = float(deepfake.get("threshold") or 0.5)
+                frame_rows = deepfake.get("frame_results") or []
+                fallback_flagged = 0
+                for frame in frame_rows:
+                    if frame.get("face_detected"):
+                        continue
+                    try:
+                        if float(frame.get("manipulation_signal")) >= threshold:
+                            fallback_flagged += 1
+                    except (TypeError, ValueError):
+                        pass
+                aggregate_n = int(deepfake.get("frames_scored_for_aggregate")
+                                  or deepfake.get("frames_analyzed") or 0)
+                aggregate_flagged = int(deepfake.get("suspicious_frame_count") or 0)
+                detail = (
+                    f"DeepfakeBench Xception produced an aggregate manipulation signal of "
+                    f"{_score(deepfake.get('manipulation_signal'))} over {aggregate_n} "
+                    f"face-detected sampled frame(s); {aggregate_flagged} of those aggregate-"
+                    f"population frames exceeded the {threshold:.2f} threshold."
+                )
+                if fallback_flagged:
+                    detail += (
+                        f" Separately, {fallback_flagged} no-face sampled frame(s) crossed "
+                        f"{threshold:.2f} under whole-frame fallback scoring and are reported "
+                        "in the localization section."
+                    )
             story.append(Paragraph(
-                f"• <b>{escape(str(signal.get('label')))}</b> — {escape(str(signal.get('detail')))} "
+                f"• <b>{escape(str(signal.get('label')))}</b> — {escape(detail)} "
                 f"Source: {escape(str(signal.get('source_model') or 'n/a'))}.", small))
         excluded = risk.get("excluded") or []
         if excluded:
@@ -1530,9 +1632,25 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         ("Basis", f"Assessed risk level {guidance.get('risk_level')}"),
     ])
     story.append(Paragraph("Recommended actions", subheading))
+    recommended_rows = []
+    verified_public_candidates = int(((provenance or {}).get("external_search") or {}).get("sources_verified") or 0)
+    for action in guidance.get("recommended_actions") or []:
+        action_text = action.get("action")
+        why_text = action.get("why")
+        # Guidance is intentionally generic, but this report knows whether the
+        # automated provenance estimator actually found a verified public lead.
+        # Keep the investigator-supplied tracing boundary while acknowledging that
+        # discovered URL so the recommendation does not contradict Section 10.
+        if verified_public_candidates and str(action_text or "").strip().lower() == "record where the media was found":
+            why_text = (
+                "No investigator-supplied source URL is attached to this case. The automated "
+                f"provenance estimator identified {verified_public_candidates} locally verified "
+                "public candidate(s); preserve and manually review the discovered URL before "
+                "relying on it for takedown or complaint action."
+            )
+        recommended_rows.append([action.get("step"), action_text, why_text, action.get("who_acts")])
     grid(["#", "Action", "Why (from this case)", "Who acts"],
-         [[action.get("step"), action.get("action"), action.get("why"), action.get("who_acts")]
-          for action in guidance.get("recommended_actions") or []],
+         recommended_rows,
          [8 * mm, 40 * mm, CONTENT_WIDTH - 82 * mm, 34 * mm])
     story.append(Paragraph("Evidence package available for export", subheading))
     for item in guidance.get("evidence_package") or []:
@@ -1552,11 +1670,11 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         "<b>This section is about DeepTrace, not about this case.</b> Nothing below changes any "
         "score, finding or conclusion in the preceding sections. It is here so that a reviewer "
         "reading a case score can see how often the detector was right on data where the answer "
-        "was known. Robustness against degraded copies is also reported here; in the current build "
-        "that part is explicitly marked as not yet implemented rather than filled with an assumed "
-        "result.", body))
+        "was known. Robustness against degraded copies is reported where a completed validation "
+        "artifact is available. Supplied externally produced copies are kept separate from "
+        "DeepTrace-generated transforms, and no unmeasured condition is presented as validated.", body))
     para(
-        "Labelled metrics say how often the detector is right on a dataset. Robustness would say "
+        "Labelled metrics say how often the detector is right on a dataset. Robustness says "
         "how much its score moves when the same file is degraded. Neither is a claim about a "
         "specific case, and no missing measurement is treated as zero or as a passing result.",
         small,
@@ -1858,14 +1976,14 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                 story.append(Paragraph(
                     f"<b>Warning.</b> {escape(str(provenance_block['manifest_mismatch']))}", small))
 
-        caveats = [text for text in (detection.get("caveats") or []) if text]
+        caveats = [_validation_caveat_text(text) for text in (detection.get("caveats") or []) if text]
         if caveats:
             story.append(Paragraph("What these accuracy figures do not say", subheading))
             for text in caveats:
                 para(f"• {text}", small)
 
     # ── robustness ───────────────────────────────────────────────────────
-    story.append(Paragraph("Robustness under degradation — implementation status",
+    story.append(Paragraph("Robustness under degradation — measured status",
                            subheading))
     if not robustness_run.get("available"):
         keyvalues([
@@ -1874,21 +1992,63 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("How to produce it", ROBUSTNESS_COMMAND),
         ])
         para(INTERPRETER_NOTE, small)
-        para("Nothing is reported about behaviour on compressed, re-uploaded or screen-recorded "
-             "copies of a file. That gap is stated rather than left to be inferred from silence.",
-             small)
+        para("No completed robustness artifact was available to this report. No degradation result "
+             "is inferred from that absence.", small)
     else:
         source = robustness_run.get("source") or {}
         keyvalues([
-            ("Method", "The same file is scored before and after a real ffmpeg degradation, and the "
-                       "two scores are compared. No labels are needed: the ground truth is that "
-                       "both copies depict the same content."),
+            ("Method", "The same baseline content is scored before and after degradation, and the "
+                       "resulting signals are compared. In this validation run, supplied external "
+                       "copies are reported separately from any DeepTrace-generated ffmpeg "
+                       "transforms. No class labels are needed for the paired stability comparison: "
+                       "the copies are treated as degraded versions of the same baseline content."),
             ("Source media", f"{source.get('file_count', 0)} file(s) from "
                              f"{source.get('description', 'an unrecorded source')}"),
             ("Source fingerprint", source.get("fingerprint")),
             ("Decision threshold", robustness_run.get("threshold")),
             ("Evaluated at (UTC)", robustness_run.get("generated_at_utc")),
         ])
+
+        supplied = robustness_run.get("supplied_variants") or {}
+        if supplied.get("status") == "completed" and supplied.get("variants"):
+            story.append(Paragraph("Supplied real-world / externally produced copies", subheading))
+            para(supplied.get("interpretation") or
+                 "These copies were supplied to the harness rather than generated by it.", small)
+            baseline = supplied.get("baseline") or {}
+            keyvalues([
+                ("Baseline file", baseline.get("file")),
+                ("Baseline manipulation signal", _score(baseline.get("score"), 3)),
+                ("Baseline peak sampled-frame signal", _score(baseline.get("peak_score"), 3)),
+                ("Baseline flagged sampled frames", baseline.get("flagged_frames")),
+            ])
+            supplied_rows = []
+            for variant in supplied.get("variants") or []:
+                if variant.get("status") != "completed":
+                    supplied_rows.append([variant.get("label"), variant.get("file"),
+                                          "Unavailable", "—", "—", variant.get("reason") or "Not measured"])
+                    continue
+                retention = variant.get("flagged_frame_retention")
+                retention_text = (_ratio(retention) if retention is not None else "N/A")
+                supplied_rows.append([
+                    variant.get("label"),
+                    variant.get("file"),
+                    _score(variant.get("degraded_score"), 3),
+                    _score(variant.get("degraded_peak_score"), 3),
+                    f"{variant.get('degraded_flagged_frames', 0)} "
+                    f"(retained {retention_text})",
+                    (f"mean shift {_score(variant.get('absolute_delta'), 3)}; "
+                     f"peak shift {_score(variant.get('peak_absolute_delta'), 3)}"),
+                ])
+            grid(["Variant", "File", "Mean signal", "Peak", "Flagged frames", "Change vs baseline"],
+                 supplied_rows,
+                 [29 * mm, 41 * mm, 18 * mm, 16 * mm, 28 * mm, CONTENT_WIDTH - 132 * mm])
+            para("Flagged-frame retention is reported separately from threshold decision agreement. "
+                 "A degraded copy can remain on the same side of the aggregate threshold while "
+                 "losing most or all of the sampled frames that originally carried manipulation "
+                 "evidence.", small)
+        elif supplied and supplied.get("status") == "unavailable":
+            story.append(Paragraph("Supplied real-world / externally produced copies", subheading))
+            para(supplied.get("reason") or "The supplied-variant comparison did not complete.", small)
 
         relevant = {"video": "visual", "image": "visual", "audio": "audio"}.get(inv.media_type or "")
         for channel_key, channel_title in (("visual", "Image and video manipulation signal"),
@@ -1897,11 +2057,12 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             overall = channel.get("overall") or {}
             bearing = (" — this is the channel that bears on the present case"
                        if channel_key == relevant else "")
-            story.append(Paragraph(f"{channel_title}{bearing}", subheading))
+            automated_label = f"Automated degradation suite — {channel_title}{bearing}"
+            story.append(Paragraph(automated_label, subheading))
             if not overall or not overall.get("paired_comparisons"):
-                para("No paired comparison completed for this channel, so no robustness figure is "
-                     "reported for it. That is an absence of measurement, not a passing result.",
-                     small)
+                para("The automated transform suite was not run for this channel in this validation "
+                     "artifact. Measured supplied-copy results, when present, are reported above; this "
+                     "line refers only to DeepTrace-generated transforms.", small)
                 continue
             grid(["Measure", "Value", "95% CI (Wilson)", "Reading"],
                  [
@@ -1918,8 +2079,17 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                       "transform."],
                      ["Mean absolute score shift", _ratio(overall.get("mean_absolute_delta")),
                       "—",
-                      "Mean change in the score itself. High agreement with a large shift still "
-                      "means the score is unstable."],
+                      "Mean change in the aggregate score itself. High agreement with a large shift "
+                      "still means the score is unstable."],
+                     ["Mean peak-frame score shift", _ratio(overall.get("mean_peak_absolute_delta")),
+                      "—",
+                      "Mean absolute change in the highest sampled-frame manipulation signal."],
+                     ["Flagged-frame retention", _ratio(overall.get("flagged_frame_retention")),
+                      "—",
+                      f"Across {overall.get('baseline_flagged_frames', 0)} originally flagged sampled "
+                      f"frames, {overall.get('flagged_frames_retained', 0)} remained flagged; "
+                      f"{overall.get('flagged_frames_lost', 0)} were lost and "
+                      f"{overall.get('flagged_frames_introduced', 0)} new flagged frame(s) appeared."],
                  ],
                  [38 * mm, 17 * mm, 27 * mm, CONTENT_WIDTH - 82 * mm])
             worst = overall.get("most_disruptive_transform") or {}
@@ -1933,21 +2103,21 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             transforms = [entry for entry in (channel.get("per_transform") or [])
                           if isinstance(entry, dict)]
             if transforms:
-                grid(["Transform", "Media", "Pairs", "Mean shift", "Agreement", "Direction of drift"],
+                grid(["Transform", "Media", "Pairs", "Mean shift", "Peak shift", "Decision agreement", "Flagged-frame retention"],
                      [[entry.get("label"), entry.get("media_type"),
                        f"{entry.get('files_compared')}"
                        + (f" (+{entry.get('files_failed')} failed)"
                           if entry.get("files_failed") else ""),
                        _ratio(entry.get("mean_absolute_delta")),
+                       _ratio(entry.get("mean_peak_absolute_delta")),
                        _ratio(entry.get("decision_agreement")),
-                       # The script itself says "no consistent direction" when the
-                       # mean signed shift is within +/-0.005, so an absent value
-                       # here can only mean no pair completed — not a null result.
-                       entry.get("signed_delta_direction") or "not measured"]
+                       (_ratio(entry.get("flagged_frame_retention"))
+                        if entry.get("flagged_frame_retention") is not None else "N/A")]
                       for entry in transforms],
-                     [CONTENT_WIDTH - 96 * mm, 16 * mm, 20 * mm, 20 * mm, 20 * mm, 20 * mm])
-                para("Direction is the sign of the mean change, printed so that a systematic drift "
-                     "stays visible even where the decision happened not to flip.", small)
+                     [CONTENT_WIDTH - 108 * mm, 14 * mm, 18 * mm, 18 * mm, 18 * mm, 20 * mm, 20 * mm])
+                para("Decision agreement and flagged-frame retention answer different questions. "
+                     "Agreement tests whether the aggregate classification side stayed the same; "
+                     "retention tests whether the same sampled forensic evidence survived.", small)
 
         robustness_caveats = [text for text in (robustness_run.get("caveats") or []) if text]
         if robustness_caveats:
@@ -2010,9 +2180,10 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         "Hash-based preservation demonstrates the integrity of this local evidence store. It is "
         "not third-party timestamping or notarisation and does not by itself establish legal "
         "admissibility.",
-        "Robustness against compressed, re-uploaded and screen-recorded media has not yet been "
-        "measured in this build. Those conditions can change model scores and must be evaluated "
-        "before claiming robustness to real-world redistribution.",
+        "A controlled robustness pilot has measured supplied basic recompression, heavy "
+        "recompression and an actual screen-recorded copy against one baseline file. These "
+        "measurements describe only those tested copies and do not establish robustness across a "
+        "representative corpus, platform ecosystem, codec family or capture workflow.",
     ]
     if inv.media_type == "video":
         limitations.append(
@@ -2047,10 +2218,20 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             "confirmed. This is normal and was not counted against the file."
         )
     if not trace_sources:
-        limitations.append(
-            "No external source was traced, so nothing is known here about where or how widely the "
-            "media was distributed."
-        )
+        external_search = (provenance or {}).get("external_search") or {}
+        verified_count = int(external_search.get("sources_verified") or 0)
+        if verified_count:
+            limitations.append(
+                f"No investigator-supplied source URL was directly traced. The automated provenance "
+                f"estimator identified {verified_count} locally verified public candidate(s), but those "
+                "matches do not establish the original uploader, first publication or full distribution history."
+            )
+        else:
+            limitations.append(
+                "No investigator-supplied source URL was directly traced, and the automated provenance "
+                "estimator did not produce a locally verified public candidate in this run. This does not "
+                "show that the media was never distributed."
+            )
     for item in limitations:
         para(f"• {item}", small)
 

@@ -469,6 +469,34 @@ export interface RobustnessChannel {
   } | null;
 }
 
+
+export interface SuppliedRobustnessBaseline {
+  file?: string;
+  score?: number | null;
+  peak_score?: number | null;
+  flagged_frames?: number;
+}
+
+export interface SuppliedRobustnessVariant {
+  label?: string;
+  file?: string;
+  status?: string;
+  reason?: string | null;
+  degraded_score?: number | null;
+  degraded_peak_score?: number | null;
+  degraded_flagged_frames?: number;
+  flagged_frame_retention?: number | null;
+  absolute_delta?: number | null;
+  peak_absolute_delta?: number | null;
+}
+
+export interface SuppliedRobustnessComparison {
+  status?: string;
+  baseline?: SuppliedRobustnessBaseline;
+  variants?: SuppliedRobustnessVariant[];
+  interpretation?: string;
+}
+
 export interface RobustnessPayload {
   available: boolean;
   reason?: string;
@@ -479,6 +507,7 @@ export interface RobustnessPayload {
   what_this_measures?: string;
   visual?: RobustnessChannel;
   audio?: RobustnessChannel;
+  supplied_variants?: SuppliedRobustnessComparison;
   caveats?: string[];
 }
 
