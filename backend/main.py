@@ -63,7 +63,7 @@ from services.forensics import (
     summarize_probe,
 )
 from services.validation import BOUNDARY as VALIDATION_BOUNDARY
-from services.validation import load_metrics, load_robustness
+from services.validation import harness_commands, load_metrics, load_robustness
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -1995,4 +1995,9 @@ def benchmark_results():
         "robustness_available": robustness["available"],
         "robustness": robustness,
         "boundary": VALIDATION_BOUNDARY,
+        # Sent whether or not a run exists. Present, it lets a reviewer reproduce
+        # the figures they are looking at; absent, it is the only actionable thing
+        # in the response. Either way the caller must not compose its own copy of
+        # the command — see services.validation.harness_commands.
+        "harness": harness_commands(),
     }

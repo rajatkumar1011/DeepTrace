@@ -63,6 +63,29 @@ def test_undefined_rates_are_null_not_zero():
     assert result["accuracy"] == 1.0
 
 
+def test_error_definitions_follow_the_caller_s_positive_class():
+    """What a false positive *is* depends on what a positive means to the caller.
+
+    ``confusion_at`` is shared by the manipulation and identity evaluations, which
+    do not share a positive class. Emitting the manipulation wording for identity
+    pairs described a false match between two strangers as "an authentic file
+    flagged as manipulated" — not loose phrasing but the wrong claim about the
+    wrong error, printed beside a correct number and carried into the UI and the
+    PDF report.
+    """
+    scores, labels = [0.9, 0.1, 0.8, 0.2], [0, 0, 1, 1]
+    manipulation = benchmark.confusion_at(scores, labels, 0.5)
+    identity = benchmark.confusion_at(scores, labels, 0.5, benchmark.IDENTITY_ERRORS)
+
+    assert "flags as manipulated" in manipulation["false_positive_rate_definition"]
+    assert "declares a match" in identity["false_positive_rate_definition"]
+    assert "manipulated" not in identity["false_positive_rate_definition"]
+    assert "same-person" in identity["false_negative_rate_definition"]
+    # Only the wording is the caller's; the arithmetic must be identical.
+    assert manipulation["false_positive_rate"] == identity["false_positive_rate"]
+    assert manipulation["false_negative_rate"] == identity["false_negative_rate"]
+
+
 # ── ROC AUC ──────────────────────────────────────────────────────────────────
 
 def test_auc_perfect_and_inverted():
@@ -133,10 +156,29 @@ def test_distribution_of_nothing_is_none():
 
 # ── Dataset handling ─────────────────────────────────────────────────────────
 
-def test_missing_dataset_produces_no_metrics(tmp_path, monkeypatch):
-    """§34: with no labelled data, the script must write nothing at all."""
-    monkeypatch.setattr(benchmark, "DATASET_DIR", str(tmp_path / "absent"))
-    assert benchmark.evaluate_manipulation(0.5, 4) is None
+def test_missing_dataset_produces_no_metrics(tmp_path):
+    """§34: with no labelled data, the script must write nothing at all.
+
+    The directory is passed rather than monkeypatched onto the module. Once
+    ``evaluate_manipulation`` grew a ``dataset_dir`` parameter defaulting to
+    ``DATASET_DIR``, that default was bound at definition time, so patching the
+    module attribute stopped reaching the function — and this assertion quietly
+    began running against whatever real corpus was staged on the machine instead
+    of against an empty directory.
+    """
+    assert benchmark.evaluate_manipulation(0.5, 4, str(tmp_path / "absent")) is None
+
+
+def test_missing_pairs_file_produces_no_identity_metrics(tmp_path, monkeypatch):
+    """§34: the identity layer reports nothing rather than a default.
+
+    Asserted separately from the manipulation layer because the two have separate
+    inputs — a pairs CSV against a directory of labelled files — and so fail
+    independently. A build with manipulation figures and no pairs must report the
+    identity layer as unmeasured, not inherit the other layer's availability.
+    """
+    monkeypatch.setattr(benchmark, "PAIRS_CSV", str(tmp_path / "absent.csv"))
+    assert benchmark.evaluate_identity(str(tmp_path)) is None
 
 
 def test_collect_ignores_non_media_files(tmp_path):

@@ -1165,7 +1165,7 @@ function HowItWorksView({ onStart }: { onStart: () => void }) {
       <div className="help-steps">
         <HelpStep icon={<FolderLock />} number="1" title="Preserve the media" body="DeepTrace saves the uploaded original and calculates a SHA-256 integrity hash server-side. For videos, sampled frames, the extracted audio track and manipulation overlays are preserved as separate artifacts, each with its own digest." />
         <HelpStep icon={<SearchCheck />} number="2" title="Run separate forensic checks" body="Manipulation detection, localization, face matching, speaker verification, audio forensics, audio-video consistency, provenance and local copy tracing are kept as separate signals rather than collapsing everything into one fake/real answer." />
-        <HelpStep icon={<ClipboardCheck />} number="3" title="Build an evidence package" body="The case combines file details, hashes, preserved artifacts, the chain of custody, per-module findings, a weighted risk explanation and a chronological timeline into one twenty-two-section report." />
+        <HelpStep icon={<ClipboardCheck />} number="3" title="Build an evidence package" body="The case combines file details, hashes, preserved artifacts, the chain of custody, per-module findings, a weighted risk explanation and a chronological timeline into one twenty-three-section report." />
         <HelpStep icon={<ExternalLink />} number="4" title="Use the official reporting channel" body="DeepTrace is a pre-reporting support layer. Official complaints should still go through the National Cyber Crime Reporting Portal or the appropriate law-enforcement channel." />
       </div>
 

@@ -158,7 +158,7 @@ export const PRIMARY_USER = {
     },
     {
       who: "The investigating officer",
-      reads: "The exported PDF — 22 sections covering the evidence register with full hash values, the chain of custody, every module's method and its stated limitations.",
+      reads: "The exported PDF — 23 sections covering the evidence register with full hash values, the chain of custody, every module's method and its stated limitations, and the measured accuracy of the layers that produced the findings.",
       why: "So the case can be assessed and taken forward on the record, not on a screenshot of a score.",
     },
     {

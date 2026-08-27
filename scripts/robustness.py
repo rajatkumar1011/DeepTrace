@@ -65,6 +65,7 @@ from services.statistics import wilson_interval as wilson  # noqa: E402
 
 ROBUSTNESS_JSON = os.path.join(BENCHMARK_DIR, "robustness.json")
 SOURCE_DIR = os.path.join(BENCHMARK_DIR, "robustness_source")
+DATASET_DIR = os.path.join(BENCHMARK_DIR, "dataset")
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 VIDEO_EXT = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
@@ -668,7 +669,77 @@ def overall(summaries: list[dict]) -> dict | None:
 # source discovery
 # --------------------------------------------------------------------------- #
 
-def discover(explicit: list[str], limit: int) -> tuple[list[str], str]:
+def dataset_sample(count: int) -> list[str]:
+    """A balanced, deterministic sample of the labelled accuracy set.
+
+    Robustness on face media is the question that matters, and the demo inputs
+    are not face media. This draws from the same corpus the accuracy figures are
+    computed on so the two artifacts describe the same kind of material.
+
+    Both classes are sampled, alternating, because the two failure modes are not
+    symmetrical: an authentic file that starts being flagged after a screen
+    recording harms the person being investigated, and a manipulated file that
+    stops being flagged harms the complainant. Reporting stability over authentic
+    media alone would hide the second one entirely.
+
+    The sample is the first N by sorted filename rather than a random draw, so
+    re-running produces the same figure and the fingerprint in the artifact stays
+    comparable between runs.
+    """
+    picked: list[list[str]] = []
+    per_class = max(count // 2, 1)
+    for label in ("real", "fake"):
+        directory = os.path.join(DATASET_DIR, label)
+        if not os.path.isdir(directory):
+            continue
+        names = sorted(name for name in os.listdir(directory)
+                       if os.path.splitext(name)[1].lower() in IMAGE_EXT | VIDEO_EXT)
+        picked.append([os.path.join(directory, name) for name in names[:per_class]])
+    # Interleave so a --max-files cap truncates both classes equally instead of
+    # silently discarding every manipulated file.
+    interleaved: list[str] = []
+    for index in range(max((len(group) for group in picked), default=0)):
+        for group in picked:
+            if index < len(group):
+                interleaved.append(group[index])
+    return interleaved
+
+
+def audio_from_discovery() -> list[str]:
+    """Standalone audio the discovery chain can see, for the audio channel.
+
+    The labelled accuracy set is face stills, so a run drawn from it would report
+    the audio channel as empty and the artifact would lose a whole degradation
+    family. Voice notes are re-encoded by every messaging app, so that family is
+    worth keeping even when the visual side comes from elsewhere.
+    """
+    found: list[str] = []
+    for directory in (SOURCE_DIR, os.path.join(REPO_ROOT, "data", "demo")):
+        if not os.path.isdir(directory):
+            continue
+        for root, dirs, names in os.walk(directory):
+            dirs.sort()
+            for name in sorted(names):
+                if os.path.splitext(name)[1].lower() in AUDIO_EXT:
+                    found.append(os.path.join(root, name))
+        if found:
+            break
+    return found
+
+
+def discover(explicit: list[str], limit: int, from_dataset: int = 0,
+             include_audio: bool = True) -> tuple[list[str], str]:
+    if from_dataset:
+        sampled = dataset_sample(from_dataset)[:limit]
+        if sampled:
+            audio = audio_from_discovery() if include_audio else []
+            description = (f"a balanced {len(sampled)}-file sample of data/benchmark/dataset/ "
+                           "(the labelled accuracy set)")
+            if audio:
+                description += f" plus {len(audio)} standalone audio file(s) for the audio channel"
+            return sampled + audio, description
+        print("  --dataset-sample requested but data/benchmark/dataset/ is empty; "
+              "falling back to source discovery.")
     if explicit:
         resolved = []
         for item in explicit:
@@ -787,6 +858,18 @@ def main() -> int:
                         help=f"Decision threshold for the agreement figure (default {DEFAULT_THRESHOLD}).")
     parser.add_argument("--max-files", type=int, default=8,
                         help="Cap on discovered files, so a large folder does not run for hours.")
+    # The default source is the demo media, which contains no face. Robustness of
+    # a face-manipulation score is only meaningful on faces, so this offers the
+    # labelled accuracy set explicitly rather than changing the default and
+    # silently dropping the audio channel with it.
+    parser.add_argument("--dataset-sample", type=int, default=0, metavar="N",
+                        help="Instead of discovering source media, draw a balanced N-file sample "
+                             "from data/benchmark/dataset/ for the visual channel. Standalone "
+                             "audio from the discovery chain is added on top so the audio channel "
+                             "still runs; --max-files caps the visual sample only.")
+    parser.add_argument("--out", default=ROBUSTNESS_JSON,
+                        help="Where to write the artifact. Only the default is read by "
+                             "GET /api/benchmark.")
     parser.add_argument("--skip-audio", action="store_true",
                         help="Visual transforms only.")
     args = parser.parse_args()
@@ -802,7 +885,8 @@ def main() -> int:
               "unavailable rather than showing a partial result.")
         return NO_FFMPEG_EXIT
 
-    files, source_description = discover(args.media, max(1, args.max_files))
+    files, source_description = discover(args.media, max(1, args.max_files), args.dataset_sample,
+                                         not args.skip_audio)
     if not files:
         print(f"\n  No source media found ({source_description}).")
         print(f"  Drop authentic media into {SOURCE_DIR} or pass --media <path>, then re-run.")
@@ -866,10 +950,11 @@ def main() -> int:
     }
 
     os.makedirs(BENCHMARK_DIR, exist_ok=True)
-    with open(ROBUSTNESS_JSON, "w", encoding="utf-8") as handle:
+    out_path = args.out if os.path.isabs(args.out) else os.path.join(BENCHMARK_DIR, args.out)
+    with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
 
-    print(f"\nWrote {ROBUSTNESS_JSON}")
+    print(f"\nWrote {out_path}")
     for channel in ("visual", "audio"):
         block = payload[channel]["overall"]
         if not block:

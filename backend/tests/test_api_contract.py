@@ -53,6 +53,24 @@ def test_dashboard_stats_are_served(client):
     assert client.get("/api/dashboard/stats").status_code == 200
 
 
+def test_benchmark_always_says_how_to_reproduce_it(client):
+    """Whether or not a run exists, the reproduction command travels with it.
+
+    Present, it lets a reviewer check the figures they are reading; absent, it is
+    the only actionable thing in the response. It must never be bare ``python``:
+    on an interpreter without the detection models the harness measures a
+    heuristic fallback, and the resulting figures look exactly like results.
+    """
+    harness = client.get("/api/benchmark").json()["harness"]
+
+    for key in ("metrics_command", "robustness_command", "fetch_command"):
+        assert harness[key].endswith(".py")
+        assert not harness[key].startswith("python ")
+    # §24: an API response must not carry the operator's directory layout.
+    assert ":\\" not in harness["metrics_command"]
+    assert harness["interpreter_note"].strip()
+
+
 def test_demo_assets_are_listed_as_demo_input(client):
     """Demo media is permitted only when clearly identified as such (§34)."""
     response = client.get("/api/demo/assets")
@@ -93,6 +111,25 @@ def test_enrollment_bounds_the_name_length(client):
 
 # ── Upload validation ────────────────────────────────────────────────────────
 
+def new_submitter(client) -> int:
+    """Create the identification record /api/investigate now requires.
+
+    Intake gained a mandatory submitter, so every upload-validation test has to
+    get past that field before it can reach the guard it is actually testing.
+    The values are format-valid throwaways: nothing here is verified against
+    Aadhaar or any telecom record, and the endpoint makes no such claim.
+    """
+    response = client.post("/api/submitter", data={
+        "full_name": "Test Complainant",
+        "aadhaar_number": "999999999999",
+        "gender": "prefer_not_to_say",
+        "date_of_birth": "1990-01-01",
+        "phone_number": "9000000000",
+    })
+    assert response.status_code == 200, payload_text(response)
+    return response.json()["id"]
+
+
 @pytest.mark.parametrize("filename,content_type", [
     ("payload.txt", "text/plain"),
     ("script.exe", "application/octet-stream"),
@@ -103,7 +140,8 @@ def test_enrollment_bounds_the_name_length(client):
 ])
 def test_unsupported_media_types_are_refused(client, filename, content_type):
     response = client.post("/api/investigate",
-                           files={"file": (filename, io.BytesIO(b"payload"), content_type)})
+                           files={"file": (filename, io.BytesIO(b"payload"), content_type)},
+                           data={"submitter_id": str(new_submitter(client))})
     assert response.status_code == 415
     assert "Unsupported media type" in payload_text(response)
 
@@ -111,7 +149,8 @@ def test_unsupported_media_types_are_refused(client, filename, content_type):
 def test_investigation_against_a_nonexistent_identity_is_refused(client):
     response = client.post("/api/investigate",
                            files={"file": ("clip.mp4", io.BytesIO(b"\x00" * 64), "video/mp4")},
-                           data={"identity_id": "999999"})
+                           data={"identity_id": "999999",
+                                 "submitter_id": str(new_submitter(client))})
     assert response.status_code == 422
     assert "no longer exists" in payload_text(response)
 

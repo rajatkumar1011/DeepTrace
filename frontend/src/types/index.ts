@@ -321,8 +321,50 @@ export interface DatasetProvenance {
   scored_counts?: Record<string, number> | null;
   manifest_matches_directory?: boolean;
   manifest_mismatch?: string | null;
+  /** Present when the set was fetched from a published corpus rather than staged locally. */
+  source_corpus?: {
+    dataset?: string;
+    dataset_url?: string;
+    config?: string | null;
+    split?: string;
+    revision?: string | null;
+    licence?: string | null;
+    rows_read?: number;
+    rows_available?: number | null;
+    label_classes?: string[] | null;
+    generator_classes?: string[] | null;
+  } | null;
+  licence_note?: string | null;
   source_media?: { name: string; media_type: string | null; sha256: string | null }[] | null;
   note?: string | null;
+}
+
+export interface ScoreDistribution {
+  count: number;
+  mean: number;
+  std: number;
+  min: number;
+  median: number;
+  max: number;
+}
+
+/**
+ * One family of media evaluated on its own, from the manipulation harness.
+ *
+ * ``metric`` names what ``value`` is, because it differs per family and the two
+ * are not interchangeable: an authentic family reports a false-positive rate, a
+ * manipulated family reports recall. Averaging them into one "accuracy" hides
+ * both errors, which is why the breakdown is carried through to the UI.
+ */
+export interface FamilyBreakdown {
+  family: string;
+  class: string;
+  evaluated: number;
+  flagged: number;
+  metric: string;
+  value: number | null;
+  value_95_ci?: [number, number] | null;
+  mean_score?: number | null;
 }
 
 export interface ManipulationMetrics {
@@ -333,11 +375,59 @@ export interface ManipulationMetrics {
   operating_point?: ConfusionPoint | null;
   roc_auc?: number | null;
   threshold_sweep?: ConfusionPoint[];
-  score_distribution?: Record<string, { count: number; mean: number; std: number; min: number; median: number; max: number } | null>;
+  score_distribution?: Record<string, ScoreDistribution | null>;
   face_detection_rate?: number;
+  per_family?: FamilyBreakdown[];
   dataset_provenance?: DatasetProvenance;
   caveats?: string[];
   dataset_fingerprint?: string;
+  note?: string;
+}
+
+/**
+ * Where the verification pairs came from.
+ *
+ * A different shape from DatasetProvenance because it answers a different
+ * question: the manipulation corpus is staged into directories on this machine,
+ * whereas identity pairs are read from a published corpus at a pinned revision.
+ * The revision is the part that matters — a false-match rate is only checkable
+ * if someone else can fetch the same pairs.
+ */
+export interface IdentityPairProvenance {
+  label_source: string;
+  corpus?: {
+    dataset?: string;
+    dataset_url?: string;
+    config?: string | null;
+    split?: string;
+    revision?: string | null;
+    rows_read?: number;
+    rows_available?: number | null;
+    same_person?: number;
+    different_person?: number;
+  } | null;
+  construction?: string | null;
+  note?: string | null;
+}
+
+/**
+ * Identity matching measured on labelled verification pairs.
+ *
+ * A positive here means "same person", so the false-positive rate is the rate at
+ * which two different people are declared a match. That is a different error
+ * from the manipulation harness's false positive, and the two must never be read
+ * as the same number — hence a separate type rather than a reused one.
+ */
+export interface IdentityMetrics {
+  evaluated: number;
+  pair_counts?: { same_person: number; different_person: number };
+  skipped_count?: number;
+  model?: string;
+  dataset_provenance?: IdentityPairProvenance;
+  operating_point?: ConfusionPoint | null;
+  roc_auc?: number | null;
+  similarity_distribution?: Record<string, ScoreDistribution | null>;
+  caveats?: string[];
   note?: string;
 }
 
@@ -392,6 +482,21 @@ export interface RobustnessPayload {
   caveats?: string[];
 }
 
+/**
+ * How to reproduce the figures, computed by the backend rather than by this UI.
+ *
+ * The interpreter matters for correctness, not convenience: run on one without
+ * the detection models and the harness measures a heuristic fallback instead of
+ * the real detector. A hard-coded path here would keep printing this machine's
+ * layout on someone else's, so the command is read from the response.
+ */
+export interface HarnessCommands {
+  metrics_command: string;
+  robustness_command: string;
+  fetch_command: string;
+  interpreter_note: string;
+}
+
 export interface BenchmarkPayload {
   available: boolean;
   metrics_available: boolean;
@@ -402,9 +507,10 @@ export interface BenchmarkPayload {
   duration_seconds?: number;
   environment?: Record<string, unknown>;
   manipulation_detection?: ManipulationMetrics | null;
-  identity_matching?: Record<string, unknown> | null;
+  identity_matching?: IdentityMetrics | null;
   provenance?: Record<string, unknown> | null;
   robustness: RobustnessPayload;
+  harness?: HarnessCommands;
 }
 
 export type ViewKey = "home" | "start" | "cases" | "case" | "help";

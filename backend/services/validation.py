@@ -13,16 +13,43 @@ zero, which would read as a measured result of zero.
 
 import json
 import os
+import sys
 
-from paths import BENCHMARK_DIR
+from paths import BENCHMARK_DIR, repo_relative
 
 METRICS_FILENAME = "latest.json"
 ROBUSTNESS_FILENAME = "robustness.json"
 
 # The commands are part of the payload rather than hard-coded into each surface,
 # so a reviewer looking at a "not measured" block is told how to measure it.
-METRICS_COMMAND = "python scripts/benchmark.py"
-ROBUSTNESS_COMMAND = "python scripts/robustness.py"
+#
+# They name an interpreter rather than bare ``python`` on purpose. The harness
+# only measures the real detector on an interpreter that has this backend's model
+# dependencies installed; on a machine that also has a system Python on PATH,
+# bare ``python`` resolves to that one instead, the harness falls back to a
+# lightweight heuristic, and the run finishes in seconds with complete, plausible
+# and meaningless figures. Printing that command in a report would be an
+# instruction to produce exactly the number this section exists to rule out.
+#
+# The interpreter is derived from the process actually serving this request,
+# which is the one a reviewer needs, and passed through ``repo_relative`` so an
+# absolute filesystem path is never printed into an API response or a PDF. That
+# helper returns None for an interpreter installed outside the repository, where
+# it cannot be named without leaking the operator's directory layout; that case
+# is described instead of named.
+_INTERPRETER = repo_relative(sys.executable) or "<this backend's own interpreter>"
+
+METRICS_COMMAND = f"{_INTERPRETER} scripts/benchmark.py"
+ROBUSTNESS_COMMAND = f"{_INTERPRETER} scripts/robustness.py"
+FETCH_COMMAND = f"{_INTERPRETER} scripts/fetch_eval_data.py"
+
+INTERPRETER_NOTE = (
+    "Run from the repository root, and with that interpreter rather than whatever `python` "
+    "resolves to on the PATH: only the backend's own environment has the detection models "
+    "installed. Run elsewhere, the accuracy harness refuses to write figures at all and exits "
+    "non-zero, and the robustness harness states in its own caveats that the scores came from a "
+    "heuristic fallback — so a run on the wrong interpreter is visible rather than silent."
+)
 
 METRICS_ABSENT = (
     "No labelled evaluation has been run in this environment. Run scripts/benchmark.py "
@@ -72,3 +99,22 @@ def load_metrics() -> dict:
 def load_robustness() -> dict:
     """The last paired degradation run, or an honest statement that there is none."""
     return _load(os.path.join(BENCHMARK_DIR, ROBUSTNESS_FILENAME), ROBUSTNESS_ABSENT)
+
+
+def harness_commands() -> dict:
+    """How to produce these figures, for whichever surface is rendering them.
+
+    The commands are computed here rather than written into each surface because
+    they encode a correctness condition, not a convenience: run on the wrong
+    interpreter, the harness measures a heuristic fallback instead of the real
+    detector. A UI that hard-coded its own copy of the path would keep printing
+    ``backend/venv/...`` on a machine whose environment lives somewhere else, and
+    a reviewer following that instruction would produce a number that looks like a
+    measurement and is not one. One definition, rendered in both places.
+    """
+    return {
+        "metrics_command": METRICS_COMMAND,
+        "robustness_command": ROBUSTNESS_COMMAND,
+        "fetch_command": FETCH_COMMAND,
+        "interpreter_note": INTERPRETER_NOTE,
+    }

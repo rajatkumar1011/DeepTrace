@@ -32,6 +32,8 @@ from reportlab.platypus import (
 from paths import PROJECT_ROOT, report_path, to_public_path
 from services.validation import (
     BOUNDARY as VALIDATION_BOUNDARY,
+    INTERPRETER_NOTE,
+    FETCH_COMMAND,
     METRICS_COMMAND,
     ROBUSTNESS_COMMAND,
     load_metrics,
@@ -51,6 +53,24 @@ STATUS_LABELS = {
     "not_applicable": "Not applicable",
     "no_credentials": "No credentials present",
     "not_run": "Not run",
+}
+
+# Who decided that two images show the same person. The distinction is the whole
+# weight of an identity figure: a published corpus's own labels can be checked by
+# anyone who fetches that revision, whereas a CSV an operator wrote is unverified
+# by anything in this repository. Rendering the raw key would leave a reader to
+# guess which of those they were looking at.
+IDENTITY_LABEL_SOURCES = {
+    "public_corpus_manifest": "The published corpus's own pair labels",
+    "operator_csv": "An operator-supplied CSV — nothing in this repository verified it",
+}
+
+# What a per-family figure counts depends on the family's true class, so the
+# column cannot carry one fixed header. An authentic family reports how often it
+# was wrongly flagged; a manipulated family reports how often it was caught.
+FAMILY_METRIC_LABELS = {
+    "false_positive_rate": "wrongly flagged",
+    "recall": "correctly caught",
 }
 
 
@@ -1026,13 +1046,154 @@ def generate_report(investigation_id: int, db_session) -> str | None:
          "the machine that generated this report. No figure is a stored constant, none is copied "
          "from a published benchmark, and where a harness has not been run this section reports "
          "that instead of a number.", small)
+    para("The labelled evaluation is printed as two layers rather than one. Identity matching "
+         "answers \"is this the same person as the reference\"; manipulation detection answers "
+         "\"does this file carry signs of synthesis\". On the corpora measured here those layers "
+         "perform very differently, so one combined \"accuracy\" would average them and describe "
+         "neither. Both are printed, and where a layer measures badly the bad figure is the one "
+         "printed.", small)
 
     metrics_run = load_metrics()
     robustness_run = load_robustness()
 
-    # ── labelled accuracy ────────────────────────────────────────────────
-    story.append(Paragraph("Accuracy on labelled data — how often the detector is right",
+    # ── identity matching ────────────────────────────────────────────────
+    # Printed before manipulation because it is the layer the product rests on:
+    # DeepTrace's question is whose face this is, not whether a file is fake. A
+    # positive here is a claimed match, so the error to read first is the rate at
+    # which a stranger's face would be attributed to the complainant. That is a
+    # different error from the manipulation harness's false positive, which is why
+    # it is named a false *match* everywhere below and never share a table with it.
+    story.append(Paragraph("Identity matching on labelled pairs — is this the same person",
                            subheading))
+    identity = metrics_run.get("identity_matching") if metrics_run.get("available") else None
+    if not isinstance(identity, dict) or not identity.get("evaluated"):
+        if isinstance(identity, dict):
+            identity_reason = identity.get("note")
+        elif metrics_run.get("available"):
+            identity_reason = "The stored evaluation carries no identity result."
+        else:
+            identity_reason = metrics_run.get("reason")
+        keyvalues([
+            ("Status", "Not measured in this environment"),
+            ("Reason", identity_reason or "No labelled verification pairs were evaluated."),
+            ("How to produce it", f"{METRICS_COMMAND}, after fetching pairs with "
+                                  f"{FETCH_COMMAND}"),
+        ])
+        para(INTERPRETER_NOTE, small)
+        para("No false-match rate is reported for the identity layer. The manipulation figures "
+             "below do not cover it — they measure a different question on a different corpus — so "
+             "reading them as identity performance would be reading the wrong number.", small)
+    else:
+        id_point = identity.get("operating_point") or {}
+        pair_counts = identity.get("pair_counts") or {}
+        keyvalues([
+            ("Pairs scored", identity.get("evaluated")),
+            ("Pair balance", f"{pair_counts.get('same_person', 0)} same-person, "
+                             f"{pair_counts.get('different_person', 0)} different-person"),
+            ("Pairs skipped", identity.get("skipped_count")),
+            ("Model actually loaded", identity.get("model")),
+            ("Match threshold", id_point.get("threshold", "Not recorded")),
+            ("Evaluated at (UTC)", metrics_run.get("generated_at_utc")),
+        ])
+
+        if id_point:
+            grid(["Metric", "Value", "95% CI (Wilson)", "What the number counts"],
+                 [
+                     ["Precision", _ratio(id_point.get("precision")),
+                      _interval(id_point.get("precision_95_ci")),
+                      "Of the pairs declared a match, the share that really were the same person."],
+                     ["Recall (sensitivity)", _ratio(id_point.get("recall_sensitivity")),
+                      _interval(id_point.get("recall_95_ci")),
+                      "Of the genuine same-person pairs, the share the matcher found."],
+                     ["F1", _ratio(id_point.get("f1")), "—",
+                      "Harmonic mean of precision and recall."],
+                     ["Specificity", _ratio(id_point.get("specificity")), "—",
+                      "Of the different-person pairs, the share correctly left unmatched."],
+                     ["False-match rate", _ratio(id_point.get("false_positive_rate")),
+                      _interval(id_point.get("false_positive_rate_95_ci")),
+                      id_point.get("false_positive_rate_definition")
+                      or "The share of different-person pairs wrongly declared a match."],
+                     ["Missed-match rate", _ratio(id_point.get("false_negative_rate")),
+                      _interval(id_point.get("false_negative_rate_95_ci")),
+                      id_point.get("false_negative_rate_definition")
+                      or "The share of genuine same-person pairs the matcher missed."],
+                     ["Accuracy", _ratio(id_point.get("accuracy")),
+                      _interval(id_point.get("accuracy_95_ci")),
+                      "Both pair classes decided correctly, over all pairs scored."],
+                     ["ROC AUC", _ratio(identity.get("roc_auc")), "—",
+                      "Threshold-free separation between same-person and different-person "
+                      "similarity. 0.5 is chance."],
+                 ],
+                 [32 * mm, 17 * mm, 27 * mm, CONTENT_WIDTH - 76 * mm])
+            story.append(Paragraph(
+                "<b>The false-match rate above and the false-positive rate in the next subsection "
+                "are not the same quantity and must not be read as one.</b> Here a positive is a "
+                "claimed identity match, so a false positive is one stranger's face attributed to "
+                "another person. There, a positive is a manipulation flag, so a false positive is "
+                "an authentic file called synthetic. A low figure in one says nothing about the "
+                "other.", small))
+            grid(["Same person, found", "Different people, wrongly matched",
+                  "Different people, left unmatched", "Same person, missed"],
+                 [[id_point.get("true_positive"), id_point.get("false_positive"),
+                   id_point.get("true_negative"), id_point.get("false_negative")]],
+                 [CONTENT_WIDTH / 4] * 4)
+            para("The raw counts are printed because a rate compresses away its own sample size. "
+                 "A false-match rate of 0.000 reads as a claim about the world; \"0 of "
+                 f"{pair_counts.get('different_person', 0)} different-person pairs\" states the "
+                 "sample it was measured on and lets a reviewer judge how much weight it carries. "
+                 "The Wilson interval quantifies the same limit.", small)
+        else:
+            para("Only one pair class was present, so precision, recall, F1 and the false-match "
+                 "rate have no denominator. They are reported as undefined rather than as zero, "
+                 "which would read as a measured result of zero.", small)
+
+        id_distribution = identity.get("similarity_distribution") or {}
+        id_dist_rows = [
+            [label, stats.get("count"), _ratio(stats.get("mean")), _ratio(stats.get("std")),
+             _ratio(stats.get("min")), _ratio(stats.get("median")), _ratio(stats.get("max"))]
+            for label, stats in (("Same person", id_distribution.get("same_person")),
+                                 ("Different person", id_distribution.get("different_person")))
+            if isinstance(stats, dict)
+        ]
+        if id_dist_rows:
+            story.append(Paragraph("Similarity distribution by true pair class", subheading))
+            grid(["True pair class", "n", "Mean", "Std", "Min", "Median", "Max"], id_dist_rows,
+                 [32 * mm, 12 * mm] + [(CONTENT_WIDTH - 44 * mm) / 5] * 5)
+            para("This is the evidence behind the summary figures: whether the two pair classes "
+                 "separate at all, and by how much. A wide overlap would make any threshold "
+                 "arbitrary regardless of where it were placed.", small)
+
+        id_provenance = identity.get("dataset_provenance") or {}
+        if id_provenance:
+            corpus = id_provenance.get("corpus") or {}
+            revision = corpus.get("revision")
+            story.append(Paragraph("Where the verification pairs came from", subheading))
+            keyvalues([
+                ("Label source", IDENTITY_LABEL_SOURCES.get(
+                    id_provenance.get("label_source"), id_provenance.get("label_source"))),
+                ("Corpus", corpus.get("dataset")),
+                ("Corpus URL", corpus.get("dataset_url")),
+                ("Split", corpus.get("split")),
+                ("Pinned revision", revision),
+                ("Rows read", f"{corpus.get('rows_read')} of "
+                              f"{corpus.get('rows_available', 'an unrecorded number of')} available"
+                              if corpus.get("rows_read") is not None else None),
+                ("Construction", id_provenance.get("construction")),
+            ])
+            para("The revision is printed because it is what makes the figure checkable: a "
+                 "false-match rate can only be reproduced by someone who can fetch the same pairs. "
+                 "The pair labels are the published corpus's own — DeepTrace did not decide which "
+                 "faces belong to the same person.", small)
+
+        id_caveats = [text for text in (identity.get("caveats") or []) if text]
+        if id_caveats:
+            story.append(Paragraph("What these identity figures do not say", subheading))
+            for text in id_caveats:
+                para(f"• {text}", small)
+
+    # ── labelled accuracy ────────────────────────────────────────────────
+    story.append(Paragraph("Manipulation detection on labelled data — how often the detector is "
+                           "right", subheading))
     detection = metrics_run.get("manipulation_detection") if metrics_run.get("available") else None
     if not isinstance(detection, dict):
         keyvalues([
@@ -1040,6 +1201,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("Reason", metrics_run.get("reason") or "No labelled evaluation result was stored."),
             ("How to produce it", METRICS_COMMAND),
         ])
+        para(INTERPRETER_NOTE, small)
         para("No precision, recall, F1 or false-positive rate is reported for this build. An "
              "unmeasured metric is not a passing metric, and no figure has been substituted for "
              "the missing measurement.", small)
@@ -1102,6 +1264,44 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                  "false-positive rate have no denominator. They are reported as undefined rather "
                  "than as zero, which would read as a measured result of zero.", small)
 
+        # An AUC below 0.5 is not a weak result, it is an inverted one, and the
+        # difference decides how the whole section should be read. Stating it in
+        # words rather than leaving a reader to notice that 0.417 < 0.5 is the
+        # point: the figure is printed as the reason DeepTrace refuses to rest a
+        # conclusion on a manipulation score, not in spite of being unflattering.
+        auc = detection.get("roc_auc")
+        if isinstance(auc, (int, float)) and auc < 0.5:
+            story.append(Paragraph(
+                f"<b>Read this figure before any other in this subsection.</b> An AUC of "
+                f"{_ratio(auc)} is below the 0.5 chance line, which means that on this corpus the "
+                "detector ranked manipulated media <i>below</i> authentic media — it is not merely "
+                "imprecise, it is pointing the wrong way, and no threshold placed anywhere on this "
+                "score would fix that. It is printed because it is the measured basis for the "
+                "position taken throughout this report: no conclusion in the preceding sections "
+                "rests on a manipulation score alone.", small))
+
+        families = [entry for entry in (detection.get("per_family") or [])
+                    if isinstance(entry, dict)]
+        if families:
+            story.append(Paragraph("Per-family breakdown", subheading))
+            grid(["Family", "True class", "n", "Flagged", "Rate", "95% CI", "What the rate is",
+                  "Mean score"],
+                 [[entry.get("family"), entry.get("class"), entry.get("evaluated"),
+                   entry.get("flagged"), _ratio(entry.get("value")),
+                   _interval(entry.get("value_95_ci")),
+                   FAMILY_METRIC_LABELS.get(entry.get("metric"), entry.get("metric")),
+                   _ratio(entry.get("mean_score"))]
+                  for entry in families],
+                 [26 * mm, 20 * mm, 10 * mm, 15 * mm, 14 * mm, 27 * mm,
+                  CONTENT_WIDTH - 130 * mm, 18 * mm])
+            para("Each family is scored on its own because the aggregate figures above average "
+                 "opposite errors. An authentic family's rate is how often it was wrongly flagged; "
+                 "a manipulated family's is how often it was caught — the two are not "
+                 "interchangeable and were never averaged into one \"accuracy\". The mean score "
+                 "column is the one to compare across rows: if a manipulated family's mean sits "
+                 "below an authentic family's, the detector is not merely imprecise on this corpus, "
+                 "it is pointing the wrong way.", small)
+
         distribution = detection.get("score_distribution") or {}
         dist_rows = [
             [label, stats.get("count"), _ratio(stats.get("mean")), _ratio(stats.get("std")),
@@ -1154,6 +1354,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
             ("Reason", robustness_run.get("reason") or "No robustness result was stored."),
             ("How to produce it", ROBUSTNESS_COMMAND),
         ])
+        para(INTERPRETER_NOTE, small)
         para("Nothing is reported about behaviour on compressed, re-uploaded or screen-recorded "
              "copies of a file. That gap is stated rather than left to be inferred from silence.",
              small)

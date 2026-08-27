@@ -57,7 +57,6 @@ DATASET_DIR = os.path.join(BENCHMARK_DIR, "dataset")
 PAIRS_CSV = os.path.join(BENCHMARK_DIR, "identity_pairs.csv")
 PAIRS_DIR = os.path.join(BENCHMARK_DIR, "pairs")
 LATEST_JSON = os.path.join(BENCHMARK_DIR, "latest.json")
-
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 VIDEO_EXT = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
@@ -70,6 +69,10 @@ SWEEP = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.80]
 # Distinct exit code for "there was nothing to evaluate", so callers can tell a
 # missing dataset apart from a completed evaluation.
 NO_DATASET_EXIT = 3
+# Distinct from success: the run completed and wrote a file, but the figures in it
+# came from the heuristic fallback rather than a trained model. A CI step or the
+# smoke test should be able to fail on that without parsing the JSON.
+FALLBACK_EXIT = 5
 
 
 # --------------------------------------------------------------------------- #
@@ -111,14 +114,31 @@ def roc_auc(scores: list[float], labels: list[int]):
     return round((positive_rank_sum - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg), 4)
 
 
-def confusion_at(scores: list[float], labels: list[int], threshold: float) -> dict:
+# What a false positive *is* depends on what the positive class is, and the two
+# evaluations in this file do not share one. Emitting the manipulation wording for
+# identity pairs described a false match between two strangers as "an authentic
+# file flagged as manipulated", which is not loose phrasing — it is the wrong
+# claim about the wrong error, printed next to a correct number.
+MANIPULATION_ERRORS = (
+    "FP / (FP + TN) — the share of authentic files this operating point flags as manipulated.",
+    "FN / (FN + TP) — the share of manipulated files this operating point clears as authentic.",
+)
+IDENTITY_ERRORS = (
+    "FP / (FP + TN) — the share of different-person pairs this operating point declares a match. "
+    "This is the error that would attribute a stranger's face to the complainant.",
+    "FN / (FN + TP) — the share of genuine same-person pairs this operating point misses.",
+)
+
+
+def confusion_at(scores: list[float], labels: list[int], threshold: float,
+                 errors: tuple[str, str] = MANIPULATION_ERRORS) -> dict:
     """Confusion matrix and the derived rates at one operating point.
 
     The false-positive rate is reported by name alongside specificity even though
-    one is ``1 - other``. In this application a false positive is an authentic
-    file flagged as manipulated — the error that would send an investigator after
-    an innocent person — so it is the number a reviewer should be able to read
-    directly rather than subtract.
+    one is ``1 - other``: it is the error that would send an investigator after an
+    innocent person, so a reviewer should be able to read it directly rather than
+    subtract. ``errors`` carries the wording for that error and its opposite,
+    because the caller is the only thing that knows what a positive means here.
     """
     tp = sum(1 for s, y in zip(scores, labels) if y == 1 and s >= threshold)
     fp = sum(1 for s, y in zip(scores, labels) if y == 0 and s >= threshold)
@@ -151,16 +171,14 @@ def confusion_at(scores: list[float], labels: list[int], threshold: float) -> di
         "recall_95_ci": wilson_interval(tp, tp + fn),
         "specificity": ratio(tn, tn + fp),
         "f1": f1,
-        # Authentic files wrongly flagged, over all authentic files.
+        # Negatives wrongly flagged, over all negatives.
         "false_positive_rate": ratio(fp, fp + tn),
         "false_positive_rate_95_ci": wilson_interval(fp, fp + tn),
-        # Manipulated files missed, over all manipulated files.
+        # Positives missed, over all positives.
         "false_negative_rate": ratio(fn, fn + tp),
         "false_negative_rate_95_ci": wilson_interval(fn, fn + tp),
-        "false_positive_rate_definition":
-            "FP / (FP + TN) — the share of authentic files this operating point flags as manipulated.",
-        "false_negative_rate_definition":
-            "FN / (FN + TP) — the share of manipulated files this operating point clears as authentic.",
+        "false_positive_rate_definition": errors[0],
+        "false_negative_rate_definition": errors[1],
     }
 
 
@@ -185,6 +203,19 @@ def distribution(values: list[float]) -> dict | None:
 # --------------------------------------------------------------------------- #
 # dataset discovery
 # --------------------------------------------------------------------------- #
+
+def under_benchmark_dir(value: str) -> str:
+    """Resolve a CLI path, treating a relative one as relative to the eval folder.
+
+    Absolute paths are honoured as given: an operator with a licensed copy of
+    FaceForensics++ on another drive must be able to point at it, and this is
+    their own shell, not a request arriving from a browser. What this does buy is
+    that the short forms used in the documentation — ``--dataset-dir
+    dataset_localedits`` — land where a reader expects rather than in whatever
+    directory they happened to be standing in.
+    """
+    return value if os.path.isabs(value) else os.path.abspath(os.path.join(BENCHMARK_DIR, value))
+
 
 def collect(directory: str) -> list[str]:
     """Media files under ``directory``, recursively, sorted for a stable digest.
@@ -271,16 +302,17 @@ def score_file(path: str, frames: int) -> dict:
     return {"ok": False, "reason": f"Unsupported extension {extension}."}
 
 
-def dataset_provenance(real_files: list[str], fake_files: list[str]) -> dict:
+def dataset_provenance(real_files: list[str], fake_files: list[str], dataset_dir: str) -> dict:
     """Where the labels came from, stated in the results rather than assumed.
 
     A precision figure is only as trustworthy as its ground truth, so the payload
     has to say who decided which class each file belongs to. If the set was built
-    by ``scripts/make_eval_set.py`` its manifest is quoted verbatim; otherwise the
-    honest answer is that the operator's directory placement is the only label,
-    and the reader is told exactly that.
+    by ``scripts/make_eval_set.py`` or downloaded by ``scripts/fetch_eval_data.py``
+    its manifest is quoted verbatim; otherwise the honest answer is that the
+    operator's directory placement is the only label, and the reader is told
+    exactly that.
     """
-    manifest_path = os.path.join(DATASET_DIR, "manifest.json")
+    manifest_path = os.path.join(dataset_dir, "manifest.json")
     if os.path.isfile(manifest_path):
         try:
             with open(manifest_path, "r", encoding="utf-8") as handle:
@@ -313,6 +345,8 @@ def dataset_provenance(real_files: list[str], fake_files: list[str]) -> dict:
                 "scored_counts": present,
                 "manifest_matches_directory": mismatch is None,
                 "manifest_mismatch": mismatch,
+                "source_corpus": manifest.get("source_corpus"),
+                "licence_note": manifest.get("licence_note"),
                 "source_media": manifest.get("source_media"),
             }
         except (OSError, ValueError) as error:
@@ -334,14 +368,120 @@ def dataset_provenance(real_files: list[str], fake_files: list[str]) -> dict:
     }
 
 
-def evaluate_manipulation(threshold: float, frames: int) -> dict | None:
-    real_files = collect(os.path.join(DATASET_DIR, "real"))
-    fake_files = collect(os.path.join(DATASET_DIR, "fake"))
+def pair_provenance(dataset_dir: str) -> dict:
+    """Where the verification pairs came from, carried into the identity results.
+
+    The manipulation figures already state their corpus; the identity figures were
+    reporting a false-match rate with nothing naming the pairs it was measured over,
+    which is the one number in this file most likely to be quoted at a reviewer. The
+    fetcher records the pair corpus and revision in the dataset manifest, so read it
+    from there rather than restating it here — a constant duplicated in two files
+    drifts, and a drifted provenance claim is worse than none.
+    """
+    manifest_path = os.path.join(dataset_dir, "manifest.json")
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                pairs = (json.load(handle) or {}).get("identity_pairs")
+            if isinstance(pairs, dict) and pairs.get("dataset"):
+                return {
+                    "label_source": "public_corpus_manifest",
+                    "corpus": pairs,
+                    "construction": (
+                        f"Verification pairs from {pairs['dataset']} "
+                        f"({pairs.get('config')}/{pairs.get('split')} split, revision "
+                        f"{pairs.get('revision') or 'unrecorded'}): "
+                        f"{pairs.get('same_person')} same-person and "
+                        f"{pairs.get('different_person')} different-person pair(s). The pair labels "
+                        f"are the corpus's own; nothing in this repository decided them."
+                    ),
+                }
+        except (OSError, ValueError) as error:
+            return {"label_source": "manifest_unreadable",
+                    "note": f"dataset/manifest.json exists but could not be parsed: {error}"}
+    return {
+        "label_source": "operator_csv",
+        "construction": (
+            "Pair labels were read from identity_pairs.csv as supplied. No manifest names the corpus "
+            "they came from, so these figures should not be quoted without one."
+        ),
+    }
+
+
+def family_of(dataset_dir: str) -> dict[str, str]:
+    """Map each dataset-relative path to the family its manifest declares.
+
+    Without this the only reportable figure is one number over the whole set,
+    which hides the thing a reviewer most needs to know: a detector can be
+    excellent on one manipulation family and blind to another, and an aggregate
+    that mixes them describes neither.
+    """
+    manifest_path = os.path.join(dataset_dir, "manifest.json")
+    if not os.path.isfile(manifest_path):
+        return {}
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    mapping: dict[str, str] = {}
+    for item in manifest.get("items") or []:
+        path, family = item.get("path"), item.get("family")
+        if isinstance(path, str) and isinstance(family, str):
+            mapping[path.replace("\\", "/")] = family
+    return mapping
+
+
+def per_family_breakdown(records: list[dict], threshold: float,
+                         dataset_dir: str) -> list[dict] | None:
+    """How the detector behaves on each declared family, separately.
+
+    For a manipulated family the reportable figure is recall — the share of that
+    family this operating point catches. For an authentic family it is the
+    false-positive rate. They are deliberately not averaged into one column:
+    they are different errors with different consequences for a complainant.
+    """
+    mapping = family_of(dataset_dir)
+    if not mapping:
+        return None
+
+    grouped: dict[tuple[str, int], list[float]] = {}
+    for record in records:
+        relative = os.path.relpath(record["path"], dataset_dir).replace("\\", "/")
+        family = mapping.get(relative)
+        if family is None:
+            continue
+        grouped.setdefault((family, record["label"]), []).append(record["score"])
+
+    rows = []
+    for (family, label), scores in sorted(grouped.items()):
+        flagged = sum(1 for score in scores if score >= threshold)
+        rate = flagged / len(scores)
+        rows.append({
+            "family": family,
+            "class": "manipulated" if label else "authentic",
+            "evaluated": len(scores),
+            "flagged": flagged,
+            # One name per row rather than two half-empty columns, so a table of
+            # these reads without the reader having to remember which is which.
+            "metric": "recall" if label else "false_positive_rate",
+            "value": round(rate, 4),
+            "value_95_ci": [round(bound, 4) for bound in wilson_interval(flagged, len(scores))],
+            "mean_score": round(sum(scores) / len(scores), 4),
+        })
+    return rows or None
+
+
+def evaluate_manipulation(threshold: float, frames: int,
+                          dataset_dir: str = DATASET_DIR) -> dict | None:
+    real_files = collect(os.path.join(dataset_dir, "real"))
+    fake_files = collect(os.path.join(dataset_dir, "fake"))
     if not real_files and not fake_files:
         return None
 
     scores: list[float] = []
     labels: list[int] = []
+    records: list[dict] = []
     faces_found = 0
     skipped: list[dict] = []
 
@@ -356,6 +496,8 @@ def evaluate_manipulation(threshold: float, frames: int) -> dict | None:
                 continue
             scores.append(outcome["score"])
             labels.append(label)
+            records.append({"path": path, "label": label, "score": outcome["score"],
+                            "face_detected": bool(outcome["face_detected"])})
             faces_found += 1 if outcome["face_detected"] else 0
             print(f"      score {outcome['score']:.4f}"
                   f"  face={'yes' if outcome['face_detected'] else 'no'}"
@@ -370,7 +512,7 @@ def evaluate_manipulation(threshold: float, frames: int) -> dict | None:
 
     both_classes = 0 in labels and 1 in labels
     model_name = deepfake.active_model_name()
-    provenance = dataset_provenance(real_files, fake_files)
+    provenance = dataset_provenance(real_files, fake_files, dataset_dir)
     # Warnings the dataset itself carries are promoted into the caveat list, not
     # left buried in the provenance block. A reader who only skims the caveats is
     # the reader most likely to over-read the headline number.
@@ -417,6 +559,7 @@ def evaluate_manipulation(threshold: float, frames: int) -> dict | None:
             "fake": distribution([s for s, y in zip(scores, labels) if y == 1]),
         },
         "face_detection_rate": round(faces_found / len(scores), 4),
+        "per_family": per_family_breakdown(records, threshold, dataset_dir),
         "dataset_provenance": provenance,
         "caveats": provenance_caveats + [
             f"Sample size is {len(scores)} file(s). Metrics from a sample this small have wide "
@@ -454,7 +597,7 @@ def resolve_pair_path(value: str) -> str:
     return value if os.path.isabs(value) else os.path.join(PAIRS_DIR, value)
 
 
-def evaluate_identity() -> dict | None:
+def evaluate_identity(dataset_dir: str = DATASET_DIR) -> dict | None:
     if not os.path.isfile(PAIRS_CSV):
         return None
 
@@ -508,7 +651,9 @@ def evaluate_identity() -> dict | None:
         "skipped_count": len(skipped),
         "skipped": skipped,
         "model": identity_model,
-        "operating_point": confusion_at(scores, labels, IDENTITY_THRESHOLD) if both_classes else None,
+        "dataset_provenance": pair_provenance(dataset_dir),
+        "operating_point": confusion_at(scores, labels, IDENTITY_THRESHOLD,
+                                        IDENTITY_ERRORS) if both_classes else None,
         "roc_auc": roc_auc(scores, labels),
         "similarity_distribution": {
             "same_person": distribution([s for s, y in zip(scores, labels) if y == 1]),
@@ -545,25 +690,41 @@ def main() -> int:
     parser.add_argument("--frames", type=int, default=default_frames,
                         help=f"Frames sampled per video (default {default_frames}, "
                              "from DEEPTRACE_FRAME_SAMPLES so it matches the application).")
+    # Two evaluation sets answer two different questions — an in-domain face
+    # corpus and a locally-built local-edit set — and a reader is owed both. They
+    # cannot share one output file, so the directory and the destination move
+    # together.
+    parser.add_argument("--dataset-dir", default=DATASET_DIR,
+                        help=f"Labelled real/ and fake/ tree to evaluate (default {DATASET_DIR}).")
+    parser.add_argument("--out", default=LATEST_JSON,
+                        help=f"Where to write the metrics JSON (default {LATEST_JSON}). "
+                             "Only the default is read by GET /api/benchmark.")
+    parser.add_argument("--skip-identity", action="store_true",
+                        help="Skip the face-matching pairs even if identity_pairs.csv exists.")
     args = parser.parse_args()
+
+    dataset_dir = under_benchmark_dir(args.dataset_dir)
+    out_path = under_benchmark_dir(args.out)
 
     os.makedirs(BENCHMARK_DIR, exist_ok=True)
     print("DeepTrace benchmark")
-    print(f"  dataset: {DATASET_DIR}")
+    print(f"  dataset: {dataset_dir}")
 
     started = time.time()
     print("\nManipulation detection")
-    manipulation = evaluate_manipulation(args.threshold, max(1, args.frames))
+    manipulation = evaluate_manipulation(args.threshold, max(1, args.frames), dataset_dir)
 
     if manipulation is None:
         print("\n  No labelled media found.")
         print("  Nothing was written, so GET /api/benchmark keeps reporting available: false.")
         print("\n  To run an evaluation, place real files here:")
-        print(f"    {os.path.join(DATASET_DIR, 'real')}")
+        print(f"    {os.path.join(dataset_dir, 'real')}")
         print("  and manipulated files here:")
-        print(f"    {os.path.join(DATASET_DIR, 'fake')}")
+        print(f"    {os.path.join(dataset_dir, 'fake')}")
         print("  then re-run this script. DeepTrace ships no pre-computed accuracy figures.")
-        print("\n  Or build a locally-labelled set from authentic source media:")
+        print("\n  Or download a small openly-licensed face corpus:")
+        print("    python scripts/fetch_eval_data.py")
+        print("  Or build a locally-labelled set from authentic source media:")
         print("    python scripts/make_eval_set.py --source <folder of authentic media>")
         # Exit non-zero so a CI step or the smoke test can tell "no dataset" apart
         # from "evaluated successfully". Both used to return 0, which meant an
@@ -571,9 +732,13 @@ def main() -> int:
         return NO_DATASET_EXIT
 
     print("\nFace matching")
-    identity_metrics = evaluate_identity()
-    if identity_metrics is None:
-        print(f"  Skipped: no {os.path.basename(PAIRS_CSV)} present (optional).")
+    identity_metrics = None
+    if args.skip_identity:
+        print("  Skipped: --skip-identity.")
+    else:
+        identity_metrics = evaluate_identity(dataset_dir)
+        if identity_metrics is None:
+            print(f"  Skipped: no {os.path.basename(PAIRS_CSV)} present (optional).")
 
     payload = {
         "generated_at_utc": forensics.utc_now_iso(),
@@ -595,10 +760,10 @@ def main() -> int:
         ),
     }
 
-    with open(LATEST_JSON, "w", encoding="utf-8") as handle:
+    with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
 
-    print(f"\nWrote {LATEST_JSON}")
+    print(f"\nWrote {out_path}")
     point = manipulation.get("operating_point")
     if point:
         print(f"  accuracy {point['accuracy']} (95% CI {point['accuracy_95_ci']})"
@@ -610,9 +775,40 @@ def main() -> int:
               f"  AUC {manipulation.get('roc_auc')}  n={manipulation['evaluated']}")
     else:
         print("  Metrics are undefined for this dataset; see the caveats in the JSON.")
+
+    for row in manipulation.get("per_family") or []:
+        print(f"  {row['family']:<20} {row['class']:<12} n={row['evaluated']:<4} "
+              f"{row['metric']} {row['value']} (95% CI {row['value_95_ci']})")
+
+    # The JSON already carries this in environment.* and in the caveats, but a
+    # figure gets quoted long before anyone reads a caveat. Running the harness on
+    # an interpreter without torch installed produces a complete, plausible,
+    # entirely meaningless set of metrics in 3 seconds instead of 3 minutes, and
+    # the only visible difference is a model name nobody was looking at. Say it
+    # last, on stderr, and name the fix.
+    checked = [("manipulation", deepfake.active_model_name())]
+    if identity_metrics is not None:
+        checked.append(("identity", identity.active_model_name()))
+    fallbacks = [(label, name) for label, name in checked
+                 if "fallback" in (name or "").lower()]
+    exit_code = 0
+    if fallbacks:
+        print("", file=sys.stderr)
+        print("  " + "!" * 74, file=sys.stderr)
+        print("  THESE FIGURES ARE NOT DETECTION PERFORMANCE.", file=sys.stderr)
+        for label, name in fallbacks:
+            print(f"    The {label} model fell back to '{name}'.", file=sys.stderr)
+        print("  The trained weights were not loaded, so the scores above come from a", file=sys.stderr)
+        print("  deterministic image-statistics heuristic. Do not quote them anywhere.", file=sys.stderr)
+        print("  Usual cause: the harness ran on an interpreter without torch. Use the", file=sys.stderr)
+        print("  same environment the backend uses, e.g.:", file=sys.stderr)
+        print("    backend/venv/Scripts/python scripts/benchmark.py", file=sys.stderr)
+        print("  " + "!" * 74, file=sys.stderr)
+        exit_code = FALLBACK_EXIT
+
     deepfake.release_models()
     identity.release_models()
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -4,6 +4,32 @@ DeepTrace is a hackathon prototype for digital impersonation analysis and forens
 
 This repository is designed for local Windows development by a small team. It does not provide universal internet crawling, guaranteed identity, guaranteed attribution, 100% deepfake detection, or guaranteed criminal evidence.
 
+## Who This Is For
+
+**Primary user: the person being impersonated — the complainant.** DeepTrace is built
+first for someone whose face or voice was misused. The guided flow is written in plain
+language, with no forensic vocabulary to learn first, because a victim may be stressed
+or unsure what to do next.
+
+**Secondary user: the cybercrime investigator or forensic examiner who receives the
+report.** The case view and the exported 23-section PDF are written for the officer
+handling the complaint: full digests, per-module findings, the chain of custody, each
+method used and the limits of each one, in the order an investigator needs them.
+
+Reporting itself stays official. DeepTrace prepares the evidence package and points at
+the correct route — it does not file anything on anyone's behalf.
+
+## Measured Performance
+
+| Layer | n | Precision | Recall | F1 | False-positive rate | ROC AUC |
+|---|---|---|---|---|---|---|
+| Identity matching (0.60) | 200 pairs | **1.0000** | 0.8300 | 0.9071 | **0.0000** [0–0.037] | 0.9961 |
+| Manipulation detection (0.50) | 500 files | 0.3607 | 0.0880 | 0.1415 | 0.1560 | **0.417** |
+
+Both figures are real, reproducible, and shown in the product — including the failing
+one. See [Evaluation and Benchmarking](#evaluation-and-benchmarking) below, and
+[docs/VALIDATION.md](docs/VALIDATION.md) for the method, corpora and caveats.
+
 ## Repository Layout
 
 ```text
@@ -12,10 +38,12 @@ backend/services/        Analysis modules (identity, deepfake, voice, audio, loc
                          provenance, similarity, tracing, integrity, risk, report, response)
 backend/tests/           pytest suite (deterministic logic, security boundaries, API contracts)
 frontend/                Next.js application and package-lock.json
-scripts/                 benchmark.py, smoke_e2e.py, and local maintenance utilities
+scripts/                 benchmark.py, robustness.py, fetch_eval_data.py, walkthrough.py,
+                         smoke_e2e.py, and local maintenance utilities
 data/demo/               Small demo assets such as lena.jpg
-data/benchmark/          Operator-supplied evaluation dataset and its results (both git-ignored)
-docs/                    Project documentation, including ENGINEERING_REPORT.md
+data/benchmark/          Evaluation corpora and their results (both git-ignored)
+docs/                    VALIDATION.md (measured figures), WALKTHROUGH.md (one full
+                         investigation), ENGINEERING_REPORT.md
 ```
 
 Runtime databases, uploads, extracted evidence, generated reports, model caches, virtual environments, and `node_modules` are intentionally local and ignored by Git.
@@ -68,12 +96,24 @@ backend\venv\Scripts\python.exe -c "import torch, torchvision, torchaudio; print
 backend\venv\Scripts\python.exe -c "from facenet_pytorch import MTCNN, InceptionResnetV1; print('FACENET OK')"
 ```
 
+### Database migration (run once after pulling)
+
+The submitter-identification feature adds a `case_submitters` table and an
+`investigations.submitter_id` column. Apply it once:
+
+```powershell
+backend\venv\Scripts\python.exe backend\migrations\001_add_case_submitter.py
+```
+
+Expected output: `DeepTrace migration complete: case_submitters + investigations.submitter_id are ready.`
+The migration is additive and idempotent. Existing investigations are preserved; cases
+created before this change simply carry `submitter_id = NULL`.
+
 Start the backend:
 
 ```powershell
 backend\venv\Scripts\python.exe -m uvicorn --app-dir backend main:app --host 127.0.0.1 --port 8000
 ```
-
 The API is available at `http://127.0.0.1:8000` and interactive API docs are at `http://127.0.0.1:8000/docs`.
 
 The first use of identity, deepfake, or voice analysis may download model files. On Windows, SpeechBrain uses a copy strategy to avoid requiring symlink privileges. Do not commit downloaded checkpoints.
@@ -162,32 +202,41 @@ demo needs no local media:
 
 Run both services, open `http://127.0.0.1:3000`, then:
 
-1. Click **Start evidence collection**.
-2. **Step 1 — Who is being impersonated?** Choose an existing protected identity, or
+1. Click **Start evidence collection**. The intake is four steps: **Identification →
+   Reference identity → Suspicious media → Review & begin**.
+2. **Step 1 — Identification.** Enter the complainant's name, Aadhaar number, gender,
+   date of birth and mobile number. These are **self-declared identification details
+   only.** DeepTrace validates their *format* — 12 Aadhaar digits, a valid 10-digit
+   Indian mobile, a date of birth that is not in the future — and nothing else. It does
+   **not** authenticate Aadhaar against UIDAI, confirm phone ownership, or establish
+   legal identity, and it makes no such claim anywhere in the product or the report.
+   The values are stored in the local SQLite database, are never returned to the client
+   after submission, and are not printed into the PDF.
+3. **Step 2 — Who is being impersonated?** Choose an existing protected identity, or
    **Add a new one** and supply a name plus a reference photo (`data/demo/lena.jpg`).
    Optionally add a reference voice sample.
-3. Tick the consent box. Enrolment is refused without it: biometric templates are only
+4. Tick the consent box. Enrolment is refused without it: biometric templates are only
    stored with recorded consent, and the consent text version is stored alongside them.
    Choosing **Continue without identity comparison** skips enrolment entirely — the file
    is still preserved and the other forensic checks still run.
-4. Click **Continue**.
-5. **Step 2 — Add the suspicious media.** Upload a file or click a demo chip.
-6. Optionally paste public `https://` URLs where copies are visible. DeepTrace retrieves
+5. Click **Continue**.
+6. **Step 3 — Add the suspicious media.** Upload a file or click a demo chip.
+7. Optionally paste public `https://` URLs where copies are visible. DeepTrace retrieves
    only what you point it at, over HTTPS, refusing private and loopback addresses.
-7. Click **Continue**, review **Step 3**, then click **Create case and begin analysis**.
-8. Watch the progress bar. Each module reports its own stage; analysis runs in the
+8. Click **Continue**, review **Step 4**, then click **Create case and begin analysis**.
+9. Watch the progress bar. Each module reports its own stage; analysis runs in the
    background and the page polls for updates.
-9. **Findings** tab: plain-language per-module results, and the risk explanation showing
-   each signal's effective weight plus every excluded signal and the reason it was excluded.
-10. **Flagged frames**: suspicious time windows and the localization overlays.
-11. **Audio & sync**: voice comparison, audio editing indicators, A/V consistency.
-12. **Metadata**: container/codec metadata and C2PA Content Credentials.
-13. **Evidence & integrity**: the preserved artifact list. Click **Run verification** to
+10. **Findings** tab: plain-language per-module results, and the risk explanation showing
+    each signal's effective weight plus every excluded signal and the reason it was excluded.
+11. **Flagged frames**: suspicious time windows and the localization overlays.
+12. **Audio & sync**: voice comparison, audio editing indicators, A/V consistency.
+13. **Metadata**: container/codec metadata and C2PA Content Credentials.
+14. **Evidence & integrity**: the preserved artifact list. Click **Run verification** to
     re-hash every file on disk and compare it against the digest recorded at preservation.
-14. **Tracing**: results for any URLs supplied, plus similar media held in other local cases.
-15. **Next steps**: case-specific guidance, the evidence package to attach, and official
+15. **Tracing**: results for any URLs supplied, plus similar media held in other local cases.
+16. **Next steps**: case-specific guidance, the evidence package to attach, and official
     reporting routes.
-16. In the sidebar, click **Generate evidence report** and download the PDF.
+17. In the sidebar, click **Generate evidence report** and download the PDF.
 
 A module reports itself unavailable when its input is genuinely missing — for example the
 demo video has no audio track and no detectable face, so voice, A/V consistency and
@@ -216,25 +265,67 @@ backend\venv\Scripts\python.exe scripts\smoke_e2e.py
 
 ## Evaluation and Benchmarking
 
-DeepTrace ships **no accuracy figures**. `GET /api/benchmark` reports
-`available: false` until you evaluate the detectors against your own labelled data:
+The repository ships **no accuracy figures**, so `GET /api/benchmark` reports
+`available: false` on a fresh clone. Figures come from running the harnesses here.
+
+**Measured on this project's own harnesses** — full method, corpora, provenance and
+caveats in **[docs/VALIDATION.md](docs/VALIDATION.md)**, and one complete
+investigation from upload to final report in
+**[docs/WALKTHROUGH.md](docs/WALKTHROUGH.md)**:
+
+| Layer | n | Precision | Recall | F1 | False-positive rate | ROC AUC |
+|---|---|---|---|---|---|---|
+| **Identity matching** (0.60) | 200 pairs | **1.0000** | 0.8300 | 0.9071 | **0.0000** [0–0.037] | 0.9961 |
+| **Manipulation detection** (0.50) | 500 files | 0.3607 | 0.0880 | 0.1415 | 0.1560 [0.116–0.206] | **0.417** |
+
+Robustness under real ffmpeg degradation (compression, messaging re-upload,
+screen-recording): visual decision agreement **0.8750** over 80 paired comparisons;
+audio **0.3750** over 8, published as a gap.
+
+Read the two rows together. Identity matching — the layer DeepTrace is actually
+built on — did not once mistake a stranger for the reference person on this sample.
+Manipulation detection scored **below the 0.5 chance line** on whole-face StyleGAN
+synthesis: the Xception detector was trained on face-swap artifacts and does not
+transfer, so on that corpus it ranked generated faces *below* authentic ones. That
+figure is published, shown in the UI and printed in every PDF report, because it is
+the measured reason for the rule the product already follows: **no conclusion rests
+on a manipulation score alone.**
+
+### Reproducing it
+
+Fetch the corpora (published datasets at pinned revisions — nothing is scraped and
+no label is invented), then run the harnesses:
+
+```powershell
+backend\venv\Scripts\python.exe scripts\fetch_eval_data.py
+```
 
 ```powershell
 backend\venv\Scripts\python.exe scripts\benchmark.py
 ```
 
-Place authentic media in `data/benchmark/dataset/real/` and manipulated media in
-`data/benchmark/dataset/fake/`. With no dataset present the script writes nothing and
-prints instructions, so the API keeps honestly reporting that no benchmark has been run.
+```powershell
+backend\venv\Scripts\python.exe scripts\robustness.py --dataset-sample 16
+```
 
-Results are written to `data/benchmark/latest.json` and include the confusion matrix at
-the operating threshold, accuracy with a 95% Wilson confidence interval, precision,
-recall, specificity, F1, ROC AUC, a threshold sweep, per-class score distributions, the
-face-detection rate, and a fingerprint of the evaluated file set. Every figure comes from
-running the real pipeline on your files. Both the dataset and the results are git-ignored.
+**Use `backend\venv\Scripts\python.exe`, not bare `python`.** On an interpreter
+without `torch`, both harnesses complete in seconds and emit a full, plausible set
+of metrics from a deterministic image-statistics fallback. `benchmark.py` prints a
+banner to stderr and exits `5` rather than let that pass as a measurement.
 
-Optionally add `data/benchmark/identity_pairs.csv` (`image_a,image_b,same_person`, paths
-relative to `data/benchmark/pairs/`) to evaluate the face-matching threshold.
+To evaluate your own media instead, place authentic files in
+`data/benchmark/dataset/real/` and manipulated files in `data/benchmark/dataset/fake/`,
+and optionally add `data/benchmark/identity_pairs.csv`
+(`image_a,image_b,same_person`, paths relative to `data/benchmark/pairs/`). With no
+dataset present the script writes nothing and prints instructions, so the API keeps
+honestly reporting that no benchmark has been run.
+
+Results are written to `data/benchmark/latest.json`: the confusion matrix at the
+operating threshold, accuracy with a 95% Wilson confidence interval, precision,
+recall, specificity, F1, ROC AUC, a threshold sweep, per-class score distributions,
+a per-family breakdown, the face-detection rate, the dataset revision, and a
+fingerprint of the evaluated file set. Every figure comes from running the real
+pipeline on those files. Both the dataset and the results are git-ignored.
 
 ## What DeepTrace Does Not Claim
 
@@ -247,6 +338,10 @@ must not be presented as providing:
 - access to private platform APIs or any authenticated system
 - guaranteed legal admissibility of the preserved evidence
 - definitive proof of impersonation from an AI score alone
+- **verification of a submitter's identity.** The identification details collected at
+  intake are self-declared. Their format is validated; nothing is checked against UIDAI,
+  a telecom operator, or any other authority. A recorded Aadhaar number establishes that
+  someone typed twelve digits, not who filed the case.
 
 Integrity verification proves the internal consistency of the local evidence store. It
 does not provide third-party timestamping, notarisation or tamper-proof custody. Reporting

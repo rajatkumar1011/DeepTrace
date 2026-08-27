@@ -37,16 +37,25 @@ backend/pretrained_models/
 
 # Benchmark input and output. Metrics are specific to the operator's dataset and
 # machine, so they are never committed: DeepTrace ships no accuracy figures, and
-# /api/benchmark reports available:false until the operator runs the script.
-data/benchmark/dataset/
+# /api/benchmark reports available:false until the operator runs the script. The
+# glob forms cover the alternate corpora the harness accepts via --dataset-dir and
+# --out (dataset_localedits/, latest_localedits.json), which are just as local.
+data/benchmark/dataset*/
 data/benchmark/pairs/
 data/benchmark/identity_pairs.csv
-data/benchmark/latest.json
+data/benchmark/latest*.json
 
 # Robustness results are equally machine-specific: the deltas depend on the local
 # ffmpeg build and on which media the operator pointed the harness at.
 data/benchmark/robustness_source/
 data/benchmark/robustness.json
+
+# Walkthrough by-products. scripts/walkthrough.py drives a real investigation, so
+# it leaves a real report PDF and a real re-encoded copy of the input behind. The
+# write-up it generates (docs/WALKTHROUGH.md) is committed; these are not, because
+# they belong to one local case in one local database.
+data/walkthrough_case_*.pdf
+data/walkthrough_tmp/
 
 # Model and tool caches
 .cache/
