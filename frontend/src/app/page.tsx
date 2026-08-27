@@ -75,7 +75,7 @@ import {
   startAnalysis,
 } from "@/lib/api/deeptrace";
 import { formatBytes, formatDate, formatPercent } from "@/lib/format";
-import { num, provenanceEstimate, str } from "@/lib/modules";
+import { num, str } from "@/lib/modules";
 import type {
   DashboardStats,
   DemoAsset,
@@ -960,14 +960,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
                   <div className="finding-list">
                     {moduleEntries.map(([key, copy]) => {
                       const analysis = modules[key];
-                      // The provenance card reports the source estimate, whose outcome lives in
-                      // its own sub-payload. The recorded module status describes the Content
-                      // Credentials read instead, so reading it here would badge a case holding
-                      // ten located pages and two verified matches "None present".
-                      const estimate = key === "provenance" ? provenanceEstimate(analysis.data) : null;
-                      const statusCopy = estimate
-                        ? { label: estimate.label, tone: estimate.tone }
-                        : MODULE_STATUS_COPY[analysis.status] || { label: analysis.status, tone: "muted" as const };
+                      const statusCopy = MODULE_STATUS_COPY[analysis.status] || { label: analysis.status, tone: "muted" as const };
                       return (
                         <div className="finding-row" key={key}>
                           <span className="finding-icon"><SearchCheck size={19} /></span>
@@ -975,9 +968,7 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
                             <strong>{copy.title} <em className={`status-tag tone-${statusCopy.tone}`}>{statusCopy.label}</em></strong>
                             <p>{plainModuleResult(key, analysis.status, analysis.score, analysis.data)}</p>
                           </div>
-                          {/* The estimator counts pages; it has no score, and a percentage here
-                              would imply one. */}
-                          <span className="finding-score">{!estimate && analysis.status === "completed" ? formatPercent(analysis.score) : "—"}</span>
+                          <span className="finding-score">{analysis.status === "completed" ? formatPercent(analysis.score) : "—"}</span>
                         </div>
                       );
                     })}
@@ -1082,20 +1073,13 @@ function CaseView({ id, onBack, onRefreshShared }: { id: number; onBack: () => v
 function plainModuleResult(key: string, status: string, score: number | null, data?: Record<string, unknown> | null) {
   const payload = data || {};
 
-  // Deliberately above the status gate. The provenance module's recorded status
-  // describes its Content Credentials read, so `no_credentials` is the source
-  // estimator's ordinary path rather than a failure needing an excuse. The
-  // estimate's own words are used: they were written next to the thresholds the
-  // comparison was decided against.
-  if (key === "provenance") {
-    const { search } = provenanceEstimate(payload);
-    return str(search, "interpretation")
-      || str(search, "reason")
-      || "No source estimate has been recorded for this file.";
-  }
-
   if (status !== "completed") {
     const reason = str(payload, "reason") || str(payload, "details") || str(payload, "status");
+    if (key === "provenance") {
+      return payload.credentials_found === true
+        ? "Content Credentials were detected. They may provide useful provenance context."
+        : "No Content Credentials are attached to this file. That is normal for media shared on social platforms and is not itself suspicious.";
+    }
     if (status === "not_applicable") return reason || "This check does not apply to the submitted media.";
     return reason || "This signal was not available for the current media or environment.";
   }
@@ -1160,10 +1144,7 @@ function humanizeEvent(type: string, fallback: string) {
     identity_attached: "Protected identity attached to case",
     voice_analysis: "Speaker verification completed",
     av_consistency: "Audio-video consistency reviewed",
-    provenance_check: "Content Credentials checked",
-    provenance_search: "Provenance estimator completed",
-    provenance_search_skipped: "Provenance estimator not run",
-    provenance_search_failed: "Provenance estimator reported an error",
+    provenance_check: "Content provenance checked",
     similarity_search: "Local similarity search completed",
     source_recorded: "Source URL recorded",
     source_traced: "External copy traced and compared",

@@ -71,13 +71,6 @@ STATUS_LABELS = {
     "not_applicable": "Not applicable",
     "no_credentials": "No credentials present",
     "not_run": "Not run",
-    # Provenance-estimator outcomes. Without these the estimator's ordinary
-    # results print as raw slugs ("no_sources") in a document an investigator
-    # reads, and a reader cannot tell a configuration state from a finding.
-    "no_sources": "No copies located",
-    "discovered_only": "Discovered, not verified",
-    "not_configured": "Search not configured",
-    "failed": "Error",
 }
 
 # Who decided that two images show the same person. The distinction is the whole
@@ -1223,16 +1216,8 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         not_run(metadata, "Metadata extraction")
 
     # 10 ────────────────────────────────────────────────────────────────────
-    section("Provenance Estimator")
+    section("Content Provenance and Located Sources")
     if provenance:
-        # The estimator leads: it is the part of this module that produces a
-        # finding. The Content Credentials read follows as a secondary check,
-        # because on nearly every file in circulation its answer is "none", and
-        # printing that absence first would frame the section around a
-        # non-result.
-        _located_sources(provenance.get("external_search") or {})
-
-        story.append(Paragraph("Secondary check — embedded Content Credentials (C2PA)", subheading))
         keyvalues([
             ("Reader", provenance.get("method") or "c2pa-python"),
             ("Credentials found", provenance.get("credentials_found")),
@@ -1254,8 +1239,9 @@ def generate_report(investigation_id: int, db_session) -> str | None:
                  "media in circulation carries none, so this is expected and is NOT treated as an "
                  "indicator of manipulation. It is excluded from the risk calculation entirely "
                  "rather than counted against the file.", small)
+        _located_sources(provenance.get("external_search") or {})
     else:
-        not_run(provenance, "Provenance estimation")
+        not_run(provenance, "Provenance inspection")
 
     # 11 ────────────────────────────────────────────────────────────────────
     section("Manipulation Analysis")
@@ -2137,11 +2123,7 @@ def generate_report(investigation_id: int, db_session) -> str | None:
     ]
     for label, payload in (
         ("Metadata extraction", metadata),
-        # Two rows, because the provenance module runs two unrelated checks and
-        # each has its own method and its own outcome. One row would attribute
-        # the C2PA reader's status to the source estimate, or the reverse.
-        ("Provenance estimator", (provenance or {}).get("external_search") or {}),
-        ("Content Credentials", provenance),
+        ("Content provenance", provenance),
         ("Manipulation detection", deepfake),
         ("Manipulation localization", localization),
         ("Face comparison", identity_result),
@@ -2155,13 +2137,6 @@ def generate_report(investigation_id: int, db_session) -> str | None:
         if label == "Metadata extraction" and payload and payload.get("status") == "completed":
             method = method or "Filesystem metadata + FFprobe/OpenCV/Pillow inspection"
             model_mode = model_mode or "Deterministic metadata extraction"
-        if label == "Provenance estimator" and payload:
-            # Verification is a second step, named only when it actually ran. On a
-            # search that returned nothing, or whose local comparison failed, no
-            # candidate page was ever fetched and the method must not say one was.
-            if method and payload.get("status") == "completed":
-                method = f"{method} Candidate pages then fetched and compared locally."
-            model_mode = model_mode or payload.get("engine")
         model_rows.append((
             label,
             method or "Did not run",

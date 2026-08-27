@@ -171,7 +171,7 @@ DeepTrace uses these pretrained models when they load successfully:
 - Manipulation analysis: `Hemg/Deepfake-Detection` through Transformers; sampled frames are analyzed individually and aggregated.
 - Manipulation analysis (preferred when the local checkpoint is present): DeepfakeBench Xception using the official `xception_best.pth` release. This detector and checkpoint are CC BY-NC 4.0 and are limited to non-commercial research/evaluation use.
 - Voice identity: SpeechBrain `speechbrain/spkrec-ecapa-voxceleb`; reference and suspicious audio are compared with the real ECAPA speaker-verification model.
-- Content provenance: `c2pa-python` reads and validates embedded C2PA Content Credentials when supported media includes them. This is a provenance signal, not a deepfake classifier. Most media carries none, so the UI presents this as a secondary check beneath the provenance estimator and the PDF prints it in the same order.
+- Content provenance: `c2pa-python` reads and validates embedded C2PA Content Credentials when supported media includes them. This is a provenance signal, not a deepfake classifier.
 
 Models are loaded lazily, one analysis family at a time, and inference runs with evaluation/no-gradient mode. CPU inference is supported. If a model cannot load, the UI marks that module unavailable or explicitly identifies the lightweight fallback; it does not fabricate scores.
 
@@ -230,11 +230,7 @@ Run both services, open `http://127.0.0.1:3000`, then:
     each signal's effective weight plus every excluded signal and the reason it was excluded.
 11. **Flagged frames**: suspicious time windows and the localization overlays.
 12. **Audio & sync**: voice comparison, audio editing indicators, A/V consistency.
-13. **Metadata**: container/codec metadata, then the **provenance estimator** — pages a
-    reverse-image index returned for sampled frames, each one fetched and compared against
-    this file locally. Discovered and matched are separate counts: a page the index returned
-    is a lead, and only a page whose served media matched on DeepTrace's own hash and face
-    comparison is reported as a match.
+13. **Metadata**: container/codec metadata and C2PA Content Credentials.
 14. **Evidence & integrity**: the preserved artifact list. Click **Run verification** to
     re-hash every file on disk and compare it against the digest recorded at preservation.
 15. **Tracing**: results for any URLs supplied, plus similar media held in other local cases.
