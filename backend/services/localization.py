@@ -177,17 +177,9 @@ def localize(deepfake_result: dict | None, media_type: str, output_dir: str,
         "overlays": overlays,
         "summary": summary,
         "interpretation": (
-            (
-                "Timestamps mark sampled frames whose manipulation score crossed the threshold; "
-                "unsampled frames between them were not examined. "
-            ) if suspicious else (
-                "No sampled frame crossed the manipulation threshold. The overlays show the "
-                "highest-scoring sampled frames for investigator review; they are not being "
-                "described as threshold-crossing findings. "
-            )
-        ) + (
-            "Overlay images visualise high-frequency residual energy — where blending and "
-            "re-compression artefacts concentrate — and are an explainable forensic aid, not a "
-            "trained segmentation mask."
+            "Timestamps mark sampled frames whose manipulation score crossed the threshold; "
+            "unsampled frames between them were not examined. Overlay images visualise "
+            "high-frequency residual energy — where blending and re-compression artefacts "
+            "concentrate — and are an explainable forensic aid, not a trained segmentation mask."
         ),
     }
